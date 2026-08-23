@@ -268,7 +268,7 @@ def repository_errors(root: Path = ROOT) -> list[str]:
     ):
         errors.append("accepted production Web Serial host source drifted")
     if declaration_path.is_file() and hashlib.sha256(declaration_path.read_bytes()).hexdigest() != (
-        "e22dea0571a42af40379b4676eb9968a5bd98d0e76ec1f3a837492078666d7f3"
+        "e3ca1f8787519c71b54bb79dc00e4d21b78af85e0a202b7acb5547d3a61294bf"
     ):
         errors.append("accepted production Web Serial host declaration drifted")
     errors.extend(verify_webserial_product_assets.verify(root=root))
