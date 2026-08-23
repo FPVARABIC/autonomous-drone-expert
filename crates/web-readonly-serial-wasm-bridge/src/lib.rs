@@ -10,6 +10,8 @@
 use core::fmt;
 use std::collections::VecDeque;
 
+use ade_capability::{CapabilityPackTrust, CapabilityPackWritePolicy};
+use ade_capability_resolution::{ReviewOnlyCapabilityStatus, resolve_review_only_capability};
 use ade_core_api::{ScopeStatus, check_scope};
 use ade_execution::{
     ExecError, IdentificationProgress, IdentificationRequest, IdentificationStage,
@@ -20,6 +22,7 @@ use ade_protocol_msp::{
     ApiVersion, CommandId, Direction, MspError, MspV1ResponseAccumulator, ResponseProgress,
     decode_frame,
 };
+use ade_readonly_profile::{ReadProfileWriteAuthority, ReadonlyIdentityProfileId};
 use ade_runtime_ports::{
     BoundaryError, IoCoordinator, IoEffect, IoResponse, OutboundPacket, RequestId, TransportEffect,
     TransportFailure, TransportResult,
@@ -127,16 +130,23 @@ enum Phase {
 
 #[derive(Debug)]
 enum FinalOutcome {
-    InScope(DeviceIdentity),
+    InScope {
+        identity: DeviceIdentity,
+        selection: ReadSelectionEvidence,
+    },
     ScopeMismatch {
         identity: DeviceIdentity,
         field: &'static str,
+        selection: ReadSelectionEvidence,
     },
     ApiScopeMismatch {
         api: ApiVersion,
         field: &'static str,
     },
-    ReadOnlyComplete(ReadonlyProfileIdentity),
+    ReadOnlyComplete {
+        identity: ReadonlyProfileIdentity,
+        selection: ReadSelectionEvidence,
+    },
     ReadProfileMismatch {
         api: ApiVersion,
         field: &'static str,
@@ -145,6 +155,123 @@ enum FinalOutcome {
         class: &'static str,
         diagnostic: Option<IdentityFailureDiagnostic>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReadSelectionEvidence {
+    profile_id: ReadonlyIdentityProfileId,
+    write_authority: ReadProfileWriteAuthority,
+    capability: CapabilitySelectionEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapabilitySelectionEvidence {
+    Match {
+        pack_id: &'static str,
+        trust: CapabilityPackTrust,
+        write_policy: CapabilityPackWritePolicy,
+    },
+    NoMatch,
+    UnknownFirmwareFamily,
+    Ambiguous,
+    InvalidPack,
+    NotReviewed,
+}
+
+fn capability_evidence(identity: &DeviceIdentity) -> CapabilitySelectionEvidence {
+    match resolve_review_only_capability(identity) {
+        ReviewOnlyCapabilityStatus::Match {
+            pack_id,
+            trust,
+            write_policy,
+        } => CapabilitySelectionEvidence::Match {
+            pack_id,
+            trust,
+            write_policy,
+        },
+        ReviewOnlyCapabilityStatus::NoMatch => CapabilitySelectionEvidence::NoMatch,
+        ReviewOnlyCapabilityStatus::UnknownFirmwareFamily => {
+            CapabilitySelectionEvidence::UnknownFirmwareFamily
+        }
+        ReviewOnlyCapabilityStatus::Ambiguous => CapabilitySelectionEvidence::Ambiguous,
+        ReviewOnlyCapabilityStatus::InvalidPack { .. } => CapabilitySelectionEvidence::InvalidPack,
+    }
+}
+
+fn legacy_selection_evidence(
+    identity: &DeviceIdentity,
+) -> Result<ReadSelectionEvidence, BridgeError> {
+    if identity.api.protocol_version != 0
+        || identity.api.api_major != 1
+        || identity.api.api_minor != 46
+        || identity.variant.identifier != *b"BTFL"
+    {
+        return Err(BridgeError::InvalidState);
+    }
+    Ok(ReadSelectionEvidence {
+        profile_id: ReadonlyIdentityProfileId::BetaflightApi146Legacy,
+        write_authority: ReadProfileWriteAuthority::NeverAuthorizesWrites,
+        capability: capability_evidence(identity),
+    })
+}
+
+fn readonly_selection_evidence(
+    identity: &ReadonlyProfileIdentity,
+) -> Result<ReadSelectionEvidence, BridgeError> {
+    if identity.write_authority != ReadProfileWriteAuthority::NeverAuthorizesWrites {
+        return Err(BridgeError::InvalidState);
+    }
+    let capability = match identity.profile_id {
+        ReadonlyIdentityProfileId::BetaflightApi147CalendarExtended => {
+            CapabilitySelectionEvidence::NotReviewed
+        }
+        ReadonlyIdentityProfileId::BetaflightApi146Legacy => {
+            return Err(BridgeError::InvalidState);
+        }
+    };
+    Ok(ReadSelectionEvidence {
+        profile_id: identity.profile_id,
+        write_authority: identity.write_authority,
+        capability,
+    })
+}
+
+const fn read_profile_label(profile_id: ReadonlyIdentityProfileId) -> &'static str {
+    match profile_id {
+        ReadonlyIdentityProfileId::BetaflightApi146Legacy => "api-1.46-legacy",
+        ReadonlyIdentityProfileId::BetaflightApi147CalendarExtended => "api-1.47-calendar-extended",
+    }
+}
+
+const fn read_profile_write_authority_label(
+    write_authority: ReadProfileWriteAuthority,
+) -> &'static str {
+    match write_authority {
+        ReadProfileWriteAuthority::NeverAuthorizesWrites => "never-authorizes-writes",
+    }
+}
+
+const fn capability_status_label(capability: CapabilitySelectionEvidence) -> &'static str {
+    match capability {
+        CapabilitySelectionEvidence::Match { .. } => "review-only-match",
+        CapabilitySelectionEvidence::NoMatch => "no-reviewed-match",
+        CapabilitySelectionEvidence::UnknownFirmwareFamily => "unknown-firmware-family",
+        CapabilitySelectionEvidence::Ambiguous => "ambiguous",
+        CapabilitySelectionEvidence::InvalidPack => "invalid-pack",
+        CapabilitySelectionEvidence::NotReviewed => "not-reviewed",
+    }
+}
+
+const fn capability_trust_label(trust: CapabilityPackTrust) -> &'static str {
+    match trust {
+        CapabilityPackTrust::ReviewOnlyEmbedded => "review-only-embedded",
+    }
+}
+
+const fn capability_write_policy_label(policy: CapabilityPackWritePolicy) -> &'static str {
+    match policy {
+        CapabilityPackWritePolicy::WritesBlocked => "writes-blocked",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -711,11 +838,17 @@ impl WasmReadonlySerialDiscovery {
         match self.identification.accept_response(&frame) {
             Ok(IdentificationProgress::Complete(identity)) => {
                 self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
+                let selection = legacy_selection_evidence(&identity)?;
                 self.outcome = Some(match check_scope(&identity) {
-                    ScopeStatus::InScope => FinalOutcome::InScope(identity),
-                    ScopeStatus::Mismatch { field } => {
-                        FinalOutcome::ScopeMismatch { identity, field }
-                    }
+                    ScopeStatus::InScope => FinalOutcome::InScope {
+                        identity,
+                        selection,
+                    },
+                    ScopeStatus::Mismatch { field } => FinalOutcome::ScopeMismatch {
+                        identity,
+                        field,
+                        selection,
+                    },
                     ScopeStatus::NotChecked => {
                         return Err(BridgeError::InvalidState);
                     }
@@ -724,7 +857,11 @@ impl WasmReadonlySerialDiscovery {
             }
             Ok(IdentificationProgress::ReadOnlyComplete(identity)) => {
                 self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
-                self.outcome = Some(FinalOutcome::ReadOnlyComplete(identity));
+                let selection = readonly_selection_evidence(&identity)?;
+                self.outcome = Some(FinalOutcome::ReadOnlyComplete {
+                    identity,
+                    selection,
+                });
                 self.start_close().map(Some)
             }
             Ok(IdentificationProgress::Pending) => {
@@ -798,11 +935,10 @@ impl WasmReadonlySerialDiscovery {
 
     fn identity(&self) -> Option<&DeviceIdentity> {
         match self.outcome.as_ref()? {
-            FinalOutcome::InScope(identity) | FinalOutcome::ScopeMismatch { identity, .. } => {
-                Some(identity)
-            }
+            FinalOutcome::InScope { identity, .. }
+            | FinalOutcome::ScopeMismatch { identity, .. } => Some(identity),
             FinalOutcome::ApiScopeMismatch { .. }
-            | FinalOutcome::ReadOnlyComplete(_)
+            | FinalOutcome::ReadOnlyComplete { .. }
             | FinalOutcome::ReadProfileMismatch { .. }
             | FinalOutcome::Failed { .. } => None,
         }
@@ -810,7 +946,16 @@ impl WasmReadonlySerialDiscovery {
 
     fn read_only_identity(&self) -> Option<&ReadonlyProfileIdentity> {
         match self.outcome.as_ref()? {
-            FinalOutcome::ReadOnlyComplete(identity) => Some(identity),
+            FinalOutcome::ReadOnlyComplete { identity, .. } => Some(identity),
+            _ => None,
+        }
+    }
+
+    fn selection_evidence(&self) -> Option<ReadSelectionEvidence> {
+        match self.outcome.as_ref()? {
+            FinalOutcome::InScope { selection, .. }
+            | FinalOutcome::ScopeMismatch { selection, .. }
+            | FinalOutcome::ReadOnlyComplete { selection, .. } => Some(*selection),
             _ => None,
         }
     }
@@ -885,14 +1030,14 @@ impl WasmReadonlySerialDiscovery {
     #[wasm_bindgen(getter, js_name = outcomeKind)]
     pub fn outcome_kind(&self) -> String {
         match &self.outcome {
-            Some(FinalOutcome::InScope(_)) if self.phase == Phase::Complete => "in-scope",
+            Some(FinalOutcome::InScope { .. }) if self.phase == Phase::Complete => "in-scope",
             Some(FinalOutcome::ScopeMismatch { .. }) if self.phase == Phase::Complete => {
                 "scope-mismatch"
             }
             Some(FinalOutcome::ApiScopeMismatch { .. }) if self.phase == Phase::Complete => {
                 "api-unsupported"
             }
-            Some(FinalOutcome::ReadOnlyComplete(_)) if self.phase == Phase::Complete => {
+            Some(FinalOutcome::ReadOnlyComplete { .. }) if self.phase == Phase::Complete => {
                 "read-only-complete"
             }
             Some(FinalOutcome::ReadProfileMismatch { .. }) if self.phase == Phase::Complete => {
@@ -959,7 +1104,7 @@ impl WasmReadonlySerialDiscovery {
                 FinalOutcome::ApiScopeMismatch { api, .. }
                 | FinalOutcome::ReadProfileMismatch { api, .. },
             ) => Some(format!("{}.{}", api.api_major, api.api_minor)),
-            Some(FinalOutcome::ReadOnlyComplete(identity)) => Some(format!(
+            Some(FinalOutcome::ReadOnlyComplete { identity, .. }) => Some(format!(
                 "{}.{}",
                 identity.api.api_major, identity.api.api_minor
             )),
@@ -1000,6 +1145,59 @@ impl WasmReadonlySerialDiscovery {
             .or_else(|| self.identity().map(|identity| identity.target_name.clone()))
     }
 
+    /// Stable identifier of the reviewed identity layout selected by Rust.
+    #[wasm_bindgen(getter, js_name = readProfileId)]
+    pub fn read_profile_id(&self) -> Option<String> {
+        self.selection_evidence()
+            .map(|selection| read_profile_label(selection.profile_id).to_owned())
+    }
+
+    /// Permanent write boundary carried by the selected read profile.
+    #[wasm_bindgen(getter, js_name = readProfileWriteAuthority)]
+    pub fn read_profile_write_authority(&self) -> Option<String> {
+        self.selection_evidence().map(|selection| {
+            read_profile_write_authority_label(selection.write_authority).to_owned()
+        })
+    }
+
+    /// Bounded outcome from the repository-reviewed capability resolver.
+    #[wasm_bindgen(getter, js_name = capabilityStatus)]
+    pub fn capability_status(&self) -> Option<String> {
+        self.selection_evidence()
+            .map(|selection| capability_status_label(selection.capability).to_owned())
+    }
+
+    /// Stable pack id only when exactly one validated review-only descriptor matched.
+    #[wasm_bindgen(getter, js_name = capabilityPackId)]
+    pub fn capability_pack_id(&self) -> Option<String> {
+        match self.selection_evidence()?.capability {
+            CapabilitySelectionEvidence::Match { pack_id, .. } => Some(pack_id.to_owned()),
+            _ => None,
+        }
+    }
+
+    /// Trust boundary only for an exact review-only capability match.
+    #[wasm_bindgen(getter, js_name = capabilityTrust)]
+    pub fn capability_trust(&self) -> Option<String> {
+        match self.selection_evidence()?.capability {
+            CapabilitySelectionEvidence::Match { trust, .. } => {
+                Some(capability_trust_label(trust).to_owned())
+            }
+            _ => None,
+        }
+    }
+
+    /// Write policy only for an exact review-only capability match.
+    #[wasm_bindgen(getter, js_name = capabilityWritePolicy)]
+    pub fn capability_write_policy(&self) -> Option<String> {
+        match self.selection_evidence()?.capability {
+            CapabilitySelectionEvidence::Match { write_policy, .. } => {
+                Some(capability_write_policy_label(write_policy).to_owned())
+            }
+            _ => None,
+        }
+    }
+
     #[wasm_bindgen(getter, js_name = hardwareObserved)]
     pub fn hardware_observed(&self) -> bool {
         false
@@ -1019,12 +1217,12 @@ mod tests {
         }
     }
 
-    fn valid_board_payload() -> Vec<u8> {
+    fn board_payload(target: &str) -> Vec<u8> {
         let mut payload = Vec::new();
         payload.extend_from_slice(b"F405");
         payload.extend_from_slice(&0u16.to_le_bytes());
         payload.extend_from_slice(&[0, 0]);
-        for value in ["SPEEDYBEEF405V4", "SpeedyBee F405 V4", "SPB"] {
+        for value in [target, "SpeedyBee F405 V4", "SPB"] {
             payload.push(u8::try_from(value.len()).unwrap());
             payload.extend_from_slice(value.as_bytes());
         }
@@ -1034,6 +1232,10 @@ mod tests {
         payload.extend_from_slice(&0u32.to_le_bytes());
         payload.extend_from_slice(&[0, 0]);
         payload
+    }
+
+    fn valid_board_payload() -> Vec<u8> {
+        board_payload("SPEEDYBEEF405V4")
     }
 
     fn feed_reply(
@@ -1219,6 +1421,18 @@ mod tests {
         assert_eq!(bridge.fc_version().as_deref(), Some("2025.12.1"));
         assert_eq!(bridge.target_name().as_deref(), Some("SPEEDYBEEF405V4"));
         assert!(bridge.scope_mismatch_field().is_none());
+        assert_eq!(
+            bridge.read_profile_id().as_deref(),
+            Some("api-1.47-calendar-extended")
+        );
+        assert_eq!(
+            bridge.read_profile_write_authority().as_deref(),
+            Some("never-authorizes-writes")
+        );
+        assert_eq!(bridge.capability_status().as_deref(), Some("not-reviewed"));
+        assert!(bridge.capability_pack_id().is_none());
+        assert!(bridge.capability_trust().is_none());
+        assert!(bridge.capability_write_policy().is_none());
         bridge.accept_close(&close.request_id, None).unwrap();
         assert_eq!(bridge.outcome_kind(), "read-only-complete");
         assert!(!bridge.hardware_observed());
@@ -1255,6 +1469,8 @@ mod tests {
         assert_eq!(bridge.api_version().as_deref(), Some("1.47"));
         assert_eq!(bridge.scope_mismatch_field().as_deref(), Some("fc_variant"));
         assert!(bridge.fc_variant().is_none());
+        assert!(bridge.read_profile_id().is_none());
+        assert!(bridge.capability_status().is_none());
         bridge.accept_close(&close.request_id, None).unwrap();
         assert_eq!(bridge.outcome_kind(), "read-profile-unsupported");
         assert!(!bridge.hardware_observed());
@@ -1697,6 +1913,54 @@ mod tests {
         assert!(bridge.failure_reason().is_none());
         bridge.accept_close(&close.request_id, None).unwrap();
         assert_eq!(bridge.outcome_kind(), "in-scope");
+        assert_eq!(bridge.read_profile_id().as_deref(), Some("api-1.46-legacy"));
+        assert_eq!(
+            bridge.read_profile_write_authority().as_deref(),
+            Some("never-authorizes-writes")
+        );
+        assert_eq!(
+            bridge.capability_status().as_deref(),
+            Some("review-only-match")
+        );
+        assert_eq!(
+            bridge.capability_pack_id().as_deref(),
+            Some("bf-4.5.5-api1.46-speedybeef405v4-review")
+        );
+        assert_eq!(
+            bridge.capability_trust().as_deref(),
+            Some("review-only-embedded")
+        );
+        assert_eq!(
+            bridge.capability_write_policy().as_deref(),
+            Some("writes-blocked")
+        );
+        assert!(!bridge.hardware_observed());
+    }
+
+    #[test]
+    fn legacy_scope_mismatch_keeps_profile_evidence_but_selects_no_capability() {
+        let (mut bridge, exchange) = bridge_at(IdentificationStage::BoardInfo);
+        let close = feed_reply(
+            &mut bridge,
+            &exchange,
+            Direction::Reply,
+            CommandId::BoardInfo,
+            &board_payload("UNREVIEWED_TARGET"),
+        );
+        bridge.accept_close(&close.request_id, None).unwrap();
+        assert_eq!(bridge.outcome_kind(), "scope-mismatch");
+        assert_eq!(bridge.read_profile_id().as_deref(), Some("api-1.46-legacy"));
+        assert_eq!(
+            bridge.read_profile_write_authority().as_deref(),
+            Some("never-authorizes-writes")
+        );
+        assert_eq!(
+            bridge.capability_status().as_deref(),
+            Some("no-reviewed-match")
+        );
+        assert!(bridge.capability_pack_id().is_none());
+        assert!(bridge.capability_trust().is_none());
+        assert!(bridge.capability_write_policy().is_none());
         assert!(!bridge.hardware_observed());
     }
 }

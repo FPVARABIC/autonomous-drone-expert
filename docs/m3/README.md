@@ -1,6 +1,6 @@
 # M3 — Read-only capability-pack resolution
 
-**Status:** slices 1–5 merged; API 1.47 read-only state-machine integration in review
+**Status:** slices 1–7 implemented; all hardware evidence remains unchanged
 
 M3 begins the firmware capability-pack layer accepted by ADR-0007. This milestone does not add a
 hardware write, a driver, a transport, an arbitrary command table or a signed-pack distribution
@@ -99,6 +99,26 @@ trusted Linux canonical path with the pinned Rust 1.85 / isolated Rust 1.97.1 ge
 existing deterministic path remaps. The provenance policy records the resulting byte hashes; no
 new runtime dependency or browser authority was introduced.
 
+## Slice 7 — bounded read-profile and capability-selection evidence
+
+The Rust Web Serial result now carries explicit, allowlisted evidence for the read profile and the
+review-only capability decision that produced a completed identity result:
+
+- API 1.46 reports the selected legacy read-profile id and its permanent
+  `NeverAuthorizesWrites` boundary. An exact descriptor match additionally reports the stable pack
+  id, `ReviewOnlyEmbedded` trust and `WritesBlocked` policy.
+- A completed API 1.46 identity outside the exact reviewed descriptor reports
+  `no-reviewed-match`; it does not inherit pack trust or a write policy.
+- API 1.47 reports the selected calendar-extended read profile and the same permanent no-write
+  boundary, but reports `not-reviewed` for capability selection. It cannot claim a capability pack
+  until the exact target/version descriptor is reviewed in a separate slice.
+- Unsupported APIs, rejected variants and protocol failures expose no profile or capability
+  selection evidence.
+
+The browser host and narrow connection facade preserve these fields only in the in-memory bounded
+result. The ordinary React product UI neither renders nor persists them. The evidence contains no
+raw frame, payload, per-unit signature, USB metadata or new transport authority.
+
 ## Safety properties
 
 The current M3 slices cannot represent or perform:
@@ -124,11 +144,9 @@ repository-reviewed descriptive data only and cannot authorize a write.
 
 ## Next M3 work
 
-1. Add read-profile/capability selection evidence to the bounded Rust/Web result model without
-   exposing firmware-engine internals in the ordinary product UI.
-2. Add a review-only capability descriptor for the newly readable API 1.47 identity only after its
+1. Add a review-only capability descriptor for the newly readable API 1.47 identity only after its
    exact target/version policy is separately reviewed; a read match must remain `WritesBlocked`.
-3. Keep all real writes blocked until a later write milestone, compatible backup/recovery evidence,
+2. Keep all real writes blocked until a later write milestone, compatible backup/recovery evidence,
    and separate owner approval.
-4. No new physical operation is required for this software slice; physical evidence remains
+3. No new physical operation is required for this software slice; physical evidence remains
    unchanged until a separately approved hardware observation.

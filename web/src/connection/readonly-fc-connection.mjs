@@ -22,6 +22,12 @@ function privacyBoundedResult(result, host) {
     failureOrigin: result.failureOrigin,
     failureStage: result.failureStage,
     failureReason: result.failureReason,
+    readProfileId: result.readProfileId,
+    readProfileWriteAuthority: result.readProfileWriteAuthority,
+    capabilityStatus: result.capabilityStatus,
+    capabilityPackId: result.capabilityPackId,
+    capabilityTrust: result.capabilityTrust,
+    capabilityWritePolicy: result.capabilityWritePolicy,
   };
 }
 

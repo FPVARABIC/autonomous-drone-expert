@@ -532,6 +532,12 @@ export class WebSerialReadonlyHost {
         fcVariant: discovery.fcVariant ?? undefined,
         fcVersion: discovery.fcVersion ?? undefined,
         targetName: discovery.targetName ?? undefined,
+        readProfileId: discovery.readProfileId ?? undefined,
+        readProfileWriteAuthority: discovery.readProfileWriteAuthority ?? undefined,
+        capabilityStatus: discovery.capabilityStatus ?? undefined,
+        capabilityPackId: discovery.capabilityPackId ?? undefined,
+        capabilityTrust: discovery.capabilityTrust ?? undefined,
+        capabilityWritePolicy: discovery.capabilityWritePolicy ?? undefined,
         hardwareObserved: discovery.hardwareObserved,
       };
       if (result.outcome === "failed") {

@@ -312,6 +312,18 @@ async function scenarioCSuccessAndGCleanup() {
   assert(run.result.fcVariant === "BTFL", "typed FC variant");
   assert(run.result.fcVersion === "4.5.5", "typed FC version");
   assert(run.result.targetName === "SPEEDYBEEF405V4", "typed target");
+  assert(run.result.readProfileId === "api-1.46-legacy", "Rust-selected legacy read profile");
+  assert(
+    run.result.readProfileWriteAuthority === "never-authorizes-writes",
+    "read profile cannot authorize writes",
+  );
+  assert(run.result.capabilityStatus === "review-only-match", "exact capability match evidence");
+  assert(
+    run.result.capabilityPackId === "bf-4.5.5-api1.46-speedybeef405v4-review",
+    "stable review-only pack id",
+  );
+  assert(run.result.capabilityTrust === "review-only-embedded", "review-only trust evidence");
+  assert(run.result.capabilityWritePolicy === "writes-blocked", "capability writes remain blocked");
   assert(run.result.hardwareObserved === false, "software evidence only");
   assert(run.port.openOptions?.baudRate === 115200, "internal baud rate");
   assert(run.port.writes.length === 4, "exactly four writes");
@@ -509,6 +521,15 @@ async function scenarioHScopeMismatch() {
   const full = await runDiscovery(FULL_SCOPE_MISMATCH_REPLIES);
   assert(full.result.outcome === "scope-mismatch", "complete identity scope mismatch result");
   assert(full.result.scopeMismatchField === "fc_version", "complete typed mismatch field");
+  assert(full.result.readProfileId === "api-1.46-legacy", "scope mismatch retains read profile");
+  assert(
+    full.result.readProfileWriteAuthority === "never-authorizes-writes",
+    "scope mismatch cannot authorize writes",
+  );
+  assert(full.result.capabilityStatus === "no-reviewed-match", "scope mismatch has no pack match");
+  assert(full.result.capabilityPackId === undefined, "scope mismatch selects no capability pack");
+  assert(full.result.capabilityTrust === undefined, "scope mismatch carries no pack trust");
+  assert(full.result.capabilityWritePolicy === undefined, "scope mismatch carries no pack policy");
   assert(full.result.hardwareObserved === false, "complete scope is not hardware evidence");
   assert(full.port.writes.length === 4 && full.port.closeCount === 1, "four-read stop and close");
 
@@ -531,6 +552,21 @@ async function scenarioH2Api147ReadOnly() {
   assert(run.result.fcVariant === "BTFL", "API 1.47 exact variant retained");
   assert(run.result.fcVersion === "2025.12.1", "API 1.47 strict version string retained");
   assert(run.result.targetName === "SPEEDYBEEF405V4", "API 1.47 target retained");
+  assert(
+    run.result.readProfileId === "api-1.47-calendar-extended",
+    "Rust-selected API 1.47 read profile",
+  );
+  assert(
+    run.result.readProfileWriteAuthority === "never-authorizes-writes",
+    "API 1.47 read profile cannot authorize writes",
+  );
+  assert(
+    run.result.capabilityStatus === "not-reviewed",
+    "API 1.47 capability stays unselected until separate descriptor review",
+  );
+  assert(run.result.capabilityPackId === undefined, "API 1.47 selects no capability pack");
+  assert(run.result.capabilityTrust === undefined, "API 1.47 carries no capability trust");
+  assert(run.result.capabilityWritePolicy === undefined, "API 1.47 carries no pack write policy");
   assert(run.result.scopeMismatchField === undefined, "read-only completion is not API unsupported");
   assert(run.result.hardwareObserved === false, "read-only completion is not hardware validation");
   assert(run.port.writes.length === 4, "API 1.47 uses exactly four empty reads");

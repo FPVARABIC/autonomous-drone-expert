@@ -183,6 +183,58 @@ export class WasmReadonlySerialDiscovery {
         return WasmReadonlySerialDirective.__wrap(ret[0]);
     }
     /**
+     * Stable pack id only when exactly one validated review-only descriptor matched.
+     * @returns {string | undefined}
+     */
+    get capabilityPackId() {
+        const ret = wasm.wasmreadonlyserialdiscovery_capabilityPackId(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Bounded outcome from the repository-reviewed capability resolver.
+     * @returns {string | undefined}
+     */
+    get capabilityStatus() {
+        const ret = wasm.wasmreadonlyserialdiscovery_capabilityStatus(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Trust boundary only for an exact review-only capability match.
+     * @returns {string | undefined}
+     */
+    get capabilityTrust() {
+        const ret = wasm.wasmreadonlyserialdiscovery_capabilityTrust(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Write policy only for an exact review-only capability match.
+     * @returns {string | undefined}
+     */
+    get capabilityWritePolicy() {
+        const ret = wasm.wasmreadonlyserialdiscovery_capabilityWritePolicy(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
      * @returns {string | undefined}
      */
     get failureClass() {
@@ -278,6 +330,32 @@ export class WasmReadonlySerialDiscovery {
         } finally {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
+    }
+    /**
+     * Stable identifier of the reviewed identity layout selected by Rust.
+     * @returns {string | undefined}
+     */
+    get readProfileId() {
+        const ret = wasm.wasmreadonlyserialdiscovery_readProfileId(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Permanent write boundary carried by the selected read profile.
+     * @returns {string | undefined}
+     */
+    get readProfileWriteAuthority() {
+        const ret = wasm.wasmreadonlyserialdiscovery_readProfileWriteAuthority(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
     }
     /**
      * @returns {string | undefined}
