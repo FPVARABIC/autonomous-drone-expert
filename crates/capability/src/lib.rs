@@ -261,8 +261,7 @@ pub fn validate_pack_descriptor(pack: &CapabilityPackDescriptor) -> Result<(), D
             return Err(DescriptorError::InvertedVersionRange);
         }
         FirmwareVersionSelector::CalendarExtendedExact {
-            version_string: "",
-            ..
+            version_string: "", ..
         } => return Err(DescriptorError::EmptyCalendarVersionString),
         FirmwareVersionSelector::LegacyRange(_)
         | FirmwareVersionSelector::CalendarExtendedExact { .. } => {}

@@ -180,9 +180,7 @@ enum CapabilitySelectionEvidence {
     InvalidPack,
 }
 
-fn capability_status_evidence(
-    status: ReviewOnlyCapabilityStatus,
-) -> CapabilitySelectionEvidence {
+fn capability_status_evidence(status: ReviewOnlyCapabilityStatus) -> CapabilitySelectionEvidence {
     match status {
         ReviewOnlyCapabilityStatus::Match {
             pack_id,
@@ -230,14 +228,14 @@ fn readonly_selection_evidence(
         return Err(BridgeError::InvalidState);
     }
     let capability = match identity.profile_id {
-        ReadonlyIdentityProfileId::BetaflightApi147CalendarExtended => capability_status_evidence(
-            resolve_review_only_read_profile_capability(
+        ReadonlyIdentityProfileId::BetaflightApi147CalendarExtended => {
+            capability_status_evidence(resolve_review_only_read_profile_capability(
                 &identity.api,
                 &identity.variant,
                 &identity.version,
                 &identity.target_name,
-            ),
-        ),
+            ))
+        }
         ReadonlyIdentityProfileId::BetaflightApi146Legacy => {
             return Err(BridgeError::InvalidState);
         }
@@ -1505,7 +1503,10 @@ mod tests {
             CommandId::BoardInfo,
             &valid_board_payload(),
         );
-        assert_eq!(bridge.capability_status().as_deref(), Some("no-reviewed-match"));
+        assert_eq!(
+            bridge.capability_status().as_deref(),
+            Some("no-reviewed-match")
+        );
         assert!(bridge.capability_pack_id().is_none());
         assert!(bridge.capability_trust().is_none());
         assert!(bridge.capability_write_policy().is_none());

@@ -179,13 +179,13 @@ pub fn resolve_review_only_read_profile_capability(
     version: &ReadonlyFcVersion,
     target_name: &str,
 ) -> ReviewOnlyCapabilityStatus {
-    let observed = match observed_read_profile_capability_identity(api, variant, version, target_name)
-    {
-        Ok(observed) => observed,
-        Err(CapabilityIdentityError::UnrecognizedFirmwareFamily) => {
-            return ReviewOnlyCapabilityStatus::UnknownFirmwareFamily;
-        }
-    };
+    let observed =
+        match observed_read_profile_capability_identity(api, variant, version, target_name) {
+            Ok(observed) => observed,
+            Err(CapabilityIdentityError::UnrecognizedFirmwareFamily) => {
+                return ReviewOnlyCapabilityStatus::UnknownFirmwareFamily;
+            }
+        };
     resolve_observed_capability(&observed)
 }
 
