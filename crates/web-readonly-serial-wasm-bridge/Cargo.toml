@@ -10,10 +10,13 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+ade-capability = { path = "../capability" }
+ade-capability-resolution = { path = "../capability-resolution" }
 ade-core-api = { path = "../core-api" }
 ade-execution = { path = "../execution" }
 ade-facts = { path = "../facts" }
 ade-protocol-msp = { path = "../protocol-msp" }
+ade-readonly-profile = { path = "../readonly-profile" }
 ade-runtime-ports = { path = "../runtime-ports" }
 ade-safety = { path = "../safety" }
 ade-session = { path = "../session" }

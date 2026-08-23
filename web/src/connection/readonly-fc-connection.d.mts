@@ -46,6 +46,20 @@ export type IdentityFailureReason =
   | "InvalidUtf8"
   | "OtherProtocolIdentityFailure";
 
+export type ReadProfileId =
+  | "api-1.46-legacy"
+  | "api-1.47-calendar-extended";
+
+export type ReadProfileWriteAuthority = "never-authorizes-writes";
+
+export type CapabilitySelectionStatus =
+  | "review-only-match"
+  | "no-reviewed-match"
+  | "unknown-firmware-family"
+  | "ambiguous"
+  | "invalid-pack"
+  | "not-reviewed";
+
 export interface PrivacyBoundedIdentityResult {
   outcome:
     | "in-scope"
@@ -64,6 +78,12 @@ export interface PrivacyBoundedIdentityResult {
   failureOrigin?: DiagnosticOrigin;
   failureStage?: IdentityFailureStage;
   failureReason?: IdentityFailureReason;
+  readProfileId?: ReadProfileId;
+  readProfileWriteAuthority?: ReadProfileWriteAuthority;
+  capabilityStatus?: CapabilitySelectionStatus;
+  capabilityPackId?: string;
+  capabilityTrust?: "review-only-embedded";
+  capabilityWritePolicy?: "writes-blocked";
 }
 
 export interface ReadonlyFcConnection {

@@ -30,10 +30,10 @@ function numericFixture(source, declaration) {
 }
 
 test("the bounded production host and declaration are byte-locked", () => {
-  assert.equal(sha256(host), "cd8149b04cb2d2606243ccb86fe803229f13f99ce4e4e41d795d084617f953ff");
+  assert.equal(sha256(host), "3a94eb8e51bfc5266fd8224d26a5ec037fcae255d8d155ddf2d1472ee99ad31a");
   assert.equal(
     sha256(hostTypes),
-    "5dae945ba11d9401872bf28aa5f4d10ee2912916503839ea1b336f692da5ff89",
+    "e22dea0571a42af40379b4676eb9968a5bd98d0e76ec1f3a837492078666d7f3",
   );
 });
 
@@ -111,7 +111,7 @@ test("production App reuses the exact accepted read-only response fixtures", () 
 });
 
 test("UI output and state are privacy bounded and make no hardware claim", () => {
-  const allowedFields = [
+  const uiFields = [
     "apiVersion",
     "fcVariant",
     "fcVersion",
@@ -122,13 +122,21 @@ test("UI output and state are privacy bounded and make no hardware claim", () =>
     "failureStage",
     "failureReason",
   ];
+  const internalSelectionEvidence = [
+    "readProfileId",
+    "readProfileWriteAuthority",
+    "capabilityStatus",
+    "capabilityPackId",
+    "capabilityTrust",
+    "capabilityWritePolicy",
+  ];
   assert.deepEqual(
     [...app.matchAll(/data-identity-field="([A-Za-z]+)"/g)].map((match) => match[1]),
-    allowedFields,
+    uiFields,
   );
   assert.deepEqual(
     [...facade.matchAll(/^    ([A-Za-z]+): result\./gm)].map((match) => match[1]),
-    ["outcome", ...allowedFields],
+    ["outcome", ...uiFields, ...internalSelectionEvidence],
   );
   const source = `${app}\n${facade}`;
   assert.doesNotMatch(
@@ -138,6 +146,9 @@ test("UI output and state are privacy bounded and make no hardware claim", () =>
   assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB|document\.cookie/);
   assert.match(host, /failureStage: discovery\.failureStage \?\? undefined/);
   assert.match(host, /failureReason: discovery\.failureReason \?\? undefined/);
+  for (const field of internalSelectionEvidence) {
+    assert.match(host, new RegExp(`${field}: discovery\\.${field} \\?\\? undefined`));
+  }
   assert.match(facadeTypes, /"API_VERSION"[\s\S]*"FC_VARIANT"[\s\S]*"FC_VERSION"[\s\S]*"BOARD_INFO"/);
   assert.match(
     facadeTypes,
@@ -146,6 +157,13 @@ test("UI output and state are privacy bounded and make no hardware claim", () =>
   assert.doesNotMatch(`${facade}\n${facadeTypes}`, /expectedBytes|foundBytes|rawPayload|signature|uid|serialNumber/i);
   assert.match(facade, /result\.hardwareObserved !== false/);
   assert.doesNotMatch(app, /hardwareObserved/);
+  assert.doesNotMatch(
+    app,
+    /readProfileId|readProfileWriteAuthority|capabilityStatus|capabilityPackId|capabilityTrust|capabilityWritePolicy/,
+  );
+  assert.match(facadeTypes, /"never-authorizes-writes"/);
+  assert.match(facadeTypes, /"review-only-match"[\s\S]*"not-reviewed"/);
+  assert.match(facadeTypes, /capabilityWritePolicy\?: "writes-blocked"/);
   assert.doesNotMatch(app, /\b(?:CONNECTED|SUPPORTED|VALIDATED)\b/);
   for (const phase of [
     "preparing",

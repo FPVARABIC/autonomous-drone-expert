@@ -42,10 +42,26 @@ export type IdentityFailureReason =
   | "InvalidUtf8"
   | "OtherProtocolIdentityFailure";
 
+export type ReadProfileId =
+  | "api-1.46-legacy"
+  | "api-1.47-calendar-extended";
+
+export type ReadProfileWriteAuthority = "never-authorizes-writes";
+
+export type CapabilitySelectionStatus =
+  | "review-only-match"
+  | "no-reviewed-match"
+  | "unknown-firmware-family"
+  | "ambiguous"
+  | "invalid-pack"
+  | "not-reviewed";
+
 export interface ReadonlyDiscoveryResult {
   outcome:
     | "in-scope"
     | "scope-mismatch"
+    | "read-only-complete"
+    | "read-profile-unsupported"
     | "api-unsupported"
     | "failed"
     | "pending";
@@ -58,6 +74,12 @@ export interface ReadonlyDiscoveryResult {
   fcVariant?: string;
   fcVersion?: string;
   targetName?: string;
+  readProfileId?: ReadProfileId;
+  readProfileWriteAuthority?: ReadProfileWriteAuthority;
+  capabilityStatus?: CapabilitySelectionStatus;
+  capabilityPackId?: string;
+  capabilityTrust?: "review-only-embedded";
+  capabilityWritePolicy?: "writes-blocked";
   hardwareObserved: false;
 }
 

@@ -170,10 +170,13 @@ version = "0.0.0"
 name = "ade-web-readonly-serial-wasm-bridge"
 version = "0.0.0"
 dependencies = [
+ "ade-capability",
+ "ade-capability-resolution",
  "ade-core-api",
  "ade-execution",
  "ade-facts",
  "ade-protocol-msp",
+ "ade-readonly-profile",
  "ade-runtime-ports",
  "ade-safety",
  "ade-session",

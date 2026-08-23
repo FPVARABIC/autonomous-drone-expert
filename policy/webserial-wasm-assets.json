@@ -6,13 +6,13 @@
     "package": "ade-web-readonly-serial-wasm-bridge",
     "manifest": {
       "path": "crates/web-readonly-serial-wasm-bridge/Cargo.toml",
-      "git_blob_sha1": "972e14c29b36bdfe0bbe9c38638ba3d3692a574d",
-      "sha256": "5290337dadb331bc4e25020030a27e41f43b3c457319010ab60dd7ce85c1e608"
+      "git_blob_sha1": "9728f525aa384c49a07eec0a1cc5b0419377a421",
+      "sha256": "22ea836067556cab0f82e2b3d88c6c89996d0b5b265a97f4ee82585c8bc08b10"
     },
     "rust_source": {
       "path": "crates/web-readonly-serial-wasm-bridge/src/lib.rs",
-      "git_blob_sha1": "ded4f1cdb927e07692e9442d4f72a2ccadc6ae3c",
-      "sha256": "e554b5ce2263b7f7c0e64451ba12286572f4d056b4dfeafd39b201b7fced17a9"
+      "git_blob_sha1": "652b637603c26ce5b006add368cc84c2933f922a",
+      "sha256": "600e30ea5099e4d320ca039e02ef311c18b6692af9ccfa6794ed217d6b2a36dd"
     },
     "build_toolchain": "1.85.0",
     "target": "wasm32-unknown-unknown",
