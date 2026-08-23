@@ -57,8 +57,7 @@ export type CapabilitySelectionStatus =
   | "no-reviewed-match"
   | "unknown-firmware-family"
   | "ambiguous"
-  | "invalid-pack"
-  | "not-reviewed";
+  | "invalid-pack";
 
 export interface PrivacyBoundedIdentityResult {
   outcome:

@@ -128,6 +128,38 @@ impl FirmwareVersionRange {
     }
 }
 
+/// Firmware-version shape required by a capability descriptor.
+///
+/// Calendar releases keep both the raw three-byte tuple and the exact published version string.
+/// They must not collapse into the legacy numeric range because doing so could match a different
+/// extended string that happens to reuse the same three bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirmwareVersionSelector {
+    /// Inclusive legacy three-byte version range.
+    LegacyRange(FirmwareVersionRange),
+    /// Exact calendar tuple and exact length-prefixed version string.
+    CalendarExtendedExact {
+        /// Exact three bytes carried by the calendar-version reply.
+        calendar_version: FirmwareVersion,
+        /// Exact UTF-8 version string carried by the same reply.
+        version_string: &'static str,
+    },
+}
+
+/// Observed firmware-version shape passed into capability resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservedFirmwareVersion<'a> {
+    /// Legacy three-byte semantic version.
+    Legacy(FirmwareVersion),
+    /// Calendar tuple plus the exact version string from the same decoded reply.
+    CalendarExtended {
+        /// Observed three-byte calendar tuple.
+        calendar_version: FirmwareVersion,
+        /// Observed strict UTF-8 version string.
+        version_string: &'a str,
+    },
+}
+
 /// Target selector for the initial fail-closed M3 descriptor.
 ///
 /// M3 intentionally has no wildcard selector: a review-only descriptor must name the exact target
@@ -173,8 +205,8 @@ pub struct CapabilityPackDescriptor {
     pub family: FirmwareFamily,
     /// MSP API range described by this pack.
     pub api_range: ApiRange,
-    /// Firmware version range described by this pack.
-    pub version_range: FirmwareVersionRange,
+    /// Exact firmware-version shape described by this pack.
+    pub version_selector: FirmwareVersionSelector,
     /// Exact target selector.
     pub target: TargetSelector,
     /// Current trust boundary.
@@ -198,6 +230,8 @@ pub enum DescriptorError {
     InvertedApiRange,
     /// Firmware version range is inverted.
     InvertedVersionRange,
+    /// Exact calendar version string is empty.
+    EmptyCalendarVersionString,
     /// Exact target name is empty.
     EmptyExactTarget,
 }
@@ -222,8 +256,16 @@ pub fn validate_pack_descriptor(pack: &CapabilityPackDescriptor) -> Result<(), D
     if pack.api_range.min_minor > pack.api_range.max_minor {
         return Err(DescriptorError::InvertedApiRange);
     }
-    if pack.version_range.min > pack.version_range.max {
-        return Err(DescriptorError::InvertedVersionRange);
+    match pack.version_selector {
+        FirmwareVersionSelector::LegacyRange(range) if range.min > range.max => {
+            return Err(DescriptorError::InvertedVersionRange);
+        }
+        FirmwareVersionSelector::CalendarExtendedExact {
+            version_string: "",
+            ..
+        } => return Err(DescriptorError::EmptyCalendarVersionString),
+        FirmwareVersionSelector::LegacyRange(_)
+        | FirmwareVersionSelector::CalendarExtendedExact { .. } => {}
     }
     match pack.target {
         TargetSelector::Exact("") => return Err(DescriptorError::EmptyExactTarget),
@@ -246,8 +288,8 @@ pub struct ObservedFirmwareIdentity<'a> {
     pub api_major: u8,
     /// MSP API minor byte.
     pub api_minor: u8,
-    /// Firmware version under the selected read-only profile.
-    pub version: FirmwareVersion,
+    /// Firmware-version shape under the selected read-only profile.
+    pub version: ObservedFirmwareVersion<'a>,
     /// Exact firmware target name.
     pub target_name: &'a str,
 }
@@ -264,7 +306,24 @@ impl CapabilityPackDescriptor {
         ) {
             return false;
         }
-        if !self.version_range.contains(identity.version) {
+        let version_matches = match (self.version_selector, identity.version) {
+            (
+                FirmwareVersionSelector::LegacyRange(range),
+                ObservedFirmwareVersion::Legacy(version),
+            ) => range.contains(version),
+            (
+                FirmwareVersionSelector::CalendarExtendedExact {
+                    calendar_version: expected_calendar,
+                    version_string: expected_string,
+                },
+                ObservedFirmwareVersion::CalendarExtended {
+                    calendar_version,
+                    version_string,
+                },
+            ) => calendar_version == expected_calendar && version_string == expected_string,
+            _ => false,
+        };
+        if !version_matches {
             return false;
         }
         match self.target {
@@ -342,9 +401,38 @@ pub const fn m3_review_only_betaflight_4_5_5_pack() -> CapabilityPackDescriptor 
             min_minor: 46,
             max_minor: 46,
         },
-        version_range: FirmwareVersionRange {
+        version_selector: FirmwareVersionSelector::LegacyRange(FirmwareVersionRange {
             min: FirmwareVersion::new(4, 5, 5),
             max: FirmwareVersion::new(4, 5, 5),
+        }),
+        target: TargetSelector::Exact("SPEEDYBEEF405V4"),
+        trust: CapabilityPackTrust::ReviewOnlyEmbedded,
+        write_policy: CapabilityPackWritePolicy::WritesBlocked,
+    }
+}
+
+/// Review-only descriptor for the pinned API 1.47 calendar-version identity.
+///
+/// The descriptor matches only the exact API tuple, exact calendar bytes, exact version string and
+/// exact proposed target. It is descriptive repository knowledge, not hardware validation, and its
+/// only representable write policy remains [`CapabilityPackWritePolicy::WritesBlocked`].
+#[must_use]
+pub const fn m3_review_only_betaflight_2025_12_1_pack() -> CapabilityPackDescriptor {
+    CapabilityPackDescriptor {
+        pack_id: "bf-2025.12.1-api1.47-speedybeef405v4-review",
+        schema_version: 1,
+        pack_version: 1,
+        revocation_id: "bf-2025.12.1-api1.47-speedybeef405v4-review-v1",
+        family: FirmwareFamily::Betaflight,
+        api_range: ApiRange {
+            protocol_version: 0,
+            api_major: 1,
+            min_minor: 47,
+            max_minor: 47,
+        },
+        version_selector: FirmwareVersionSelector::CalendarExtendedExact {
+            calendar_version: FirmwareVersion::new(25, 12, 1),
+            version_string: "2025.12.1",
         },
         target: TargetSelector::Exact("SPEEDYBEEF405V4"),
         trust: CapabilityPackTrust::ReviewOnlyEmbedded,
@@ -362,7 +450,21 @@ mod tests {
             protocol_version: 0,
             api_major: 1,
             api_minor: 46,
-            version: FirmwareVersion::new(4, 5, 5),
+            version: ObservedFirmwareVersion::Legacy(FirmwareVersion::new(4, 5, 5)),
+            target_name: "SPEEDYBEEF405V4",
+        }
+    }
+
+    fn exact_calendar_identity() -> ObservedFirmwareIdentity<'static> {
+        ObservedFirmwareIdentity {
+            family: FirmwareFamily::Betaflight,
+            protocol_version: 0,
+            api_major: 1,
+            api_minor: 47,
+            version: ObservedFirmwareVersion::CalendarExtended {
+                calendar_version: FirmwareVersion::new(25, 12, 1),
+                version_string: "2025.12.1",
+            },
             target_name: "SPEEDYBEEF405V4",
         }
     }
@@ -417,7 +519,7 @@ mod tests {
         );
 
         let mut version = exact_identity();
-        version.version = FirmwareVersion::new(4, 5, 4);
+        version.version = ObservedFirmwareVersion::Legacy(FirmwareVersion::new(4, 5, 4));
         assert_eq!(
             resolve_read_only_pack(&version, &packs),
             ReadOnlyPackResolution::NoMatch
@@ -427,6 +529,66 @@ mod tests {
         family.family = FirmwareFamily::Inav;
         assert_eq!(
             resolve_read_only_pack(&family, &packs),
+            ReadOnlyPackResolution::NoMatch
+        );
+    }
+
+    #[test]
+    fn exact_calendar_descriptor_is_review_only_write_blocked_and_matches_exactly() {
+        let pack = m3_review_only_betaflight_2025_12_1_pack();
+        let packs = [pack];
+        assert_eq!(validate_pack_descriptor(&pack), Ok(()));
+        assert_eq!(pack.trust, CapabilityPackTrust::ReviewOnlyEmbedded);
+        assert_eq!(pack.write_policy, CapabilityPackWritePolicy::WritesBlocked);
+        assert_eq!(
+            resolve_read_only_pack(&exact_calendar_identity(), &packs),
+            ReadOnlyPackResolution::Match(&packs[0])
+        );
+    }
+
+    #[test]
+    fn calendar_descriptor_rejects_api_target_calendar_string_and_shape_drift() {
+        let pack = m3_review_only_betaflight_2025_12_1_pack();
+        let packs = [pack];
+
+        let mut api = exact_calendar_identity();
+        api.api_minor = 46;
+        assert_eq!(
+            resolve_read_only_pack(&api, &packs),
+            ReadOnlyPackResolution::NoMatch
+        );
+
+        let mut target = exact_calendar_identity();
+        target.target_name = "SPEEDYBEEF405V5";
+        assert_eq!(
+            resolve_read_only_pack(&target, &packs),
+            ReadOnlyPackResolution::NoMatch
+        );
+
+        let mut calendar = exact_calendar_identity();
+        calendar.version = ObservedFirmwareVersion::CalendarExtended {
+            calendar_version: FirmwareVersion::new(25, 12, 2),
+            version_string: "2025.12.1",
+        };
+        assert_eq!(
+            resolve_read_only_pack(&calendar, &packs),
+            ReadOnlyPackResolution::NoMatch
+        );
+
+        let mut string = exact_calendar_identity();
+        string.version = ObservedFirmwareVersion::CalendarExtended {
+            calendar_version: FirmwareVersion::new(25, 12, 1),
+            version_string: "2025.12.1-custom",
+        };
+        assert_eq!(
+            resolve_read_only_pack(&string, &packs),
+            ReadOnlyPackResolution::NoMatch
+        );
+
+        let mut legacy_shape = exact_calendar_identity();
+        legacy_shape.version = ObservedFirmwareVersion::Legacy(FirmwareVersion::new(25, 12, 1));
+        assert_eq!(
+            resolve_read_only_pack(&legacy_shape, &packs),
             ReadOnlyPackResolution::NoMatch
         );
     }
@@ -510,13 +672,23 @@ mod tests {
         );
 
         let mut pack = m3_review_only_betaflight_4_5_5_pack();
-        pack.version_range = FirmwareVersionRange {
+        pack.version_selector = FirmwareVersionSelector::LegacyRange(FirmwareVersionRange {
             min: FirmwareVersion::new(4, 5, 6),
             max: FirmwareVersion::new(4, 5, 5),
-        };
+        });
         assert_eq!(
             validate_pack_descriptor(&pack),
             Err(DescriptorError::InvertedVersionRange)
+        );
+
+        let mut pack = m3_review_only_betaflight_2025_12_1_pack();
+        pack.version_selector = FirmwareVersionSelector::CalendarExtendedExact {
+            calendar_version: FirmwareVersion::new(25, 12, 1),
+            version_string: "",
+        };
+        assert_eq!(
+            validate_pack_descriptor(&pack),
+            Err(DescriptorError::EmptyCalendarVersionString)
         );
 
         let mut pack = m3_review_only_betaflight_4_5_5_pack();

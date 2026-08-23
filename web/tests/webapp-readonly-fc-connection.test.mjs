@@ -33,7 +33,7 @@ test("the bounded production host and declaration are byte-locked", () => {
   assert.equal(sha256(host), "3a94eb8e51bfc5266fd8224d26a5ec037fcae255d8d155ddf2d1472ee99ad31a");
   assert.equal(
     sha256(hostTypes),
-    "e22dea0571a42af40379b4676eb9968a5bd98d0e76ec1f3a837492078666d7f3",
+    "e3ca1f8787519c71b54bb79dc00e4d21b78af85e0a202b7acb5547d3a61294bf",
   );
 });
 
@@ -162,7 +162,8 @@ test("UI output and state are privacy bounded and make no hardware claim", () =>
     /readProfileId|readProfileWriteAuthority|capabilityStatus|capabilityPackId|capabilityTrust|capabilityWritePolicy/,
   );
   assert.match(facadeTypes, /"never-authorizes-writes"/);
-  assert.match(facadeTypes, /"review-only-match"[\s\S]*"not-reviewed"/);
+  assert.match(facadeTypes, /"review-only-match"[\s\S]*"no-reviewed-match"/);
+  assert.doesNotMatch(facadeTypes, /"not-reviewed"/);
   assert.match(facadeTypes, /capabilityWritePolicy\?: "writes-blocked"/);
   assert.doesNotMatch(app, /\b(?:CONNECTED|SUPPORTED|VALIDATED)\b/);
   for (const phase of [

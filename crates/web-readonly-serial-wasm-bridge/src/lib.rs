@@ -11,7 +11,10 @@ use core::fmt;
 use std::collections::VecDeque;
 
 use ade_capability::{CapabilityPackTrust, CapabilityPackWritePolicy};
-use ade_capability_resolution::{ReviewOnlyCapabilityStatus, resolve_review_only_capability};
+use ade_capability_resolution::{
+    ReviewOnlyCapabilityStatus, resolve_review_only_capability,
+    resolve_review_only_read_profile_capability,
+};
 use ade_core_api::{ScopeStatus, check_scope};
 use ade_execution::{
     ExecError, IdentificationProgress, IdentificationRequest, IdentificationStage,
@@ -175,11 +178,12 @@ enum CapabilitySelectionEvidence {
     UnknownFirmwareFamily,
     Ambiguous,
     InvalidPack,
-    NotReviewed,
 }
 
-fn capability_evidence(identity: &DeviceIdentity) -> CapabilitySelectionEvidence {
-    match resolve_review_only_capability(identity) {
+fn capability_status_evidence(
+    status: ReviewOnlyCapabilityStatus,
+) -> CapabilitySelectionEvidence {
+    match status {
         ReviewOnlyCapabilityStatus::Match {
             pack_id,
             trust,
@@ -196,6 +200,10 @@ fn capability_evidence(identity: &DeviceIdentity) -> CapabilitySelectionEvidence
         ReviewOnlyCapabilityStatus::Ambiguous => CapabilitySelectionEvidence::Ambiguous,
         ReviewOnlyCapabilityStatus::InvalidPack { .. } => CapabilitySelectionEvidence::InvalidPack,
     }
+}
+
+fn capability_evidence(identity: &DeviceIdentity) -> CapabilitySelectionEvidence {
+    capability_status_evidence(resolve_review_only_capability(identity))
 }
 
 fn legacy_selection_evidence(
@@ -222,9 +230,14 @@ fn readonly_selection_evidence(
         return Err(BridgeError::InvalidState);
     }
     let capability = match identity.profile_id {
-        ReadonlyIdentityProfileId::BetaflightApi147CalendarExtended => {
-            CapabilitySelectionEvidence::NotReviewed
-        }
+        ReadonlyIdentityProfileId::BetaflightApi147CalendarExtended => capability_status_evidence(
+            resolve_review_only_read_profile_capability(
+                &identity.api,
+                &identity.variant,
+                &identity.version,
+                &identity.target_name,
+            ),
+        ),
         ReadonlyIdentityProfileId::BetaflightApi146Legacy => {
             return Err(BridgeError::InvalidState);
         }
@@ -258,7 +271,6 @@ const fn capability_status_label(capability: CapabilitySelectionEvidence) -> &'s
         CapabilitySelectionEvidence::UnknownFirmwareFamily => "unknown-firmware-family",
         CapabilitySelectionEvidence::Ambiguous => "ambiguous",
         CapabilitySelectionEvidence::InvalidPack => "invalid-pack",
-        CapabilitySelectionEvidence::NotReviewed => "not-reviewed",
     }
 }
 
@@ -1429,10 +1441,22 @@ mod tests {
             bridge.read_profile_write_authority().as_deref(),
             Some("never-authorizes-writes")
         );
-        assert_eq!(bridge.capability_status().as_deref(), Some("not-reviewed"));
-        assert!(bridge.capability_pack_id().is_none());
-        assert!(bridge.capability_trust().is_none());
-        assert!(bridge.capability_write_policy().is_none());
+        assert_eq!(
+            bridge.capability_status().as_deref(),
+            Some("review-only-match")
+        );
+        assert_eq!(
+            bridge.capability_pack_id().as_deref(),
+            Some("bf-2025.12.1-api1.47-speedybeef405v4-review")
+        );
+        assert_eq!(
+            bridge.capability_trust().as_deref(),
+            Some("review-only-embedded")
+        );
+        assert_eq!(
+            bridge.capability_write_policy().as_deref(),
+            Some("writes-blocked")
+        );
         bridge.accept_close(&close.request_id, None).unwrap();
         assert_eq!(bridge.outcome_kind(), "read-only-complete");
         assert!(!bridge.hardware_observed());
@@ -1444,6 +1468,50 @@ mod tests {
                 .count(),
             4,
         );
+    }
+
+    #[test]
+    fn api_147_version_string_drift_completes_read_only_without_a_pack_match() {
+        let mut bridge = WasmReadonlySerialDiscovery::create().unwrap();
+        let open = bridge.begin_open().unwrap();
+        let api = bridge.accept_open_ok(&open.request_id).unwrap();
+        let variant = feed_reply(
+            &mut bridge,
+            &api,
+            Direction::Reply,
+            CommandId::ApiVersion,
+            &[0, 1, 47],
+        );
+        let version = feed_reply(
+            &mut bridge,
+            &variant,
+            Direction::Reply,
+            CommandId::FcVariant,
+            b"BTFL",
+        );
+        let mut version_payload = vec![25, 12, 1, 16];
+        version_payload.extend_from_slice(b"2025.12.1-custom");
+        let board = feed_reply(
+            &mut bridge,
+            &version,
+            Direction::Reply,
+            CommandId::FcVersion,
+            &version_payload,
+        );
+        let close = feed_reply(
+            &mut bridge,
+            &board,
+            Direction::Reply,
+            CommandId::BoardInfo,
+            &valid_board_payload(),
+        );
+        assert_eq!(bridge.capability_status().as_deref(), Some("no-reviewed-match"));
+        assert!(bridge.capability_pack_id().is_none());
+        assert!(bridge.capability_trust().is_none());
+        assert!(bridge.capability_write_policy().is_none());
+        bridge.accept_close(&close.request_id, None).unwrap();
+        assert_eq!(bridge.outcome_kind(), "read-only-complete");
+        assert!(!bridge.hardware_observed());
     }
 
     #[test]

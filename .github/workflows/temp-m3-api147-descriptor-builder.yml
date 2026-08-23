@@ -1,0 +1,121 @@
+name: TEMP M3 API147 Descriptor Builder
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-api147-descriptor:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feat/m3-api147-review-only-descriptor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/m3-api147-review-only-descriptor
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install canonical product and generator toolchains
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
+          rustup toolchain install 1.97.1 --profile minimal
+
+      - name: Format and validate focused Rust capability boundary
+        run: |
+          cargo fmt --all
+          cargo +1.85.0 check --locked -p ade-web-readonly-serial-wasm-bridge
+          cargo +1.85.0 test --locked -p ade-capability
+          cargo +1.85.0 test --locked -p ade-capability-resolution
+          cargo +1.85.0 test --locked -p ade-web-readonly-serial-wasm-bridge
+
+      - name: Regenerate canonical read-only Web Serial product assets
+        env:
+          RUSTFLAGS: >-
+            --remap-path-prefix=/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-0.2.127/src/convert/slices.rs=/source/wasm-bindgen/src/convert/slices.rs
+            --remap-path-prefix=/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-0.2.127/src/externref.rs=/source/wasm-bindgen/src/externref.rs
+            --remap-path-prefix=crates/protocol-msp/src/lib.rs=/source/project/crates/protocol-msp/src/lib.rs
+        run: |
+          cargo +1.85.0 build --locked --release --target wasm32-unknown-unknown -p ade-web-readonly-serial-wasm-bridge
+          rm -rf target/webserial-wasm-product-regenerated
+          mkdir -p target/webserial-wasm-product-regenerated
+          cargo +1.97.1 run --locked --manifest-path tools/wasm-bindgen-cli-support/Cargo.toml -- \
+            target/wasm32-unknown-unknown/release/ade_web_readonly_serial_wasm_bridge.wasm \
+            target/webserial-wasm-product-regenerated
+          cp target/webserial-wasm-product-regenerated/ade_web_readonly_serial_wasm_bridge.js \
+            web/public/wasm/ade_web_readonly_serial_wasm_bridge.js
+          cp target/webserial-wasm-product-regenerated/ade_web_readonly_serial_wasm_bridge_bg.wasm \
+            web/public/wasm/ade_web_readonly_serial_wasm_bridge_bg.wasm
+
+      - name: Refresh derived-asset provenance hashes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+
+          root = Path('.')
+          policy_path = root / 'policy/webserial-wasm-assets.json'
+          policy = json.loads(policy_path.read_text(encoding='utf-8'))
+
+          def sha256(path: Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          def git_blob_sha1(path: Path) -> str:
+              content = path.read_bytes()
+              header = f'blob {len(content)}\0'.encode()
+              return hashlib.sha1(header + content, usedforsecurity=False).hexdigest()
+
+          for source in ('manifest', 'rust_source'):
+              path = root / policy['source'][source]['path']
+              policy['source'][source]['sha256'] = sha256(path)
+              policy['source'][source]['git_blob_sha1'] = git_blob_sha1(path)
+          for record in policy['outputs']:
+              path = root / record['path']
+              record['sha256'] = sha256(path)
+              record['size'] = path.stat().st_size
+          policy_path.write_text(json.dumps(policy, indent=2) + '\n', encoding='utf-8')
+          PY
+          python3 scripts/verify_webserial_product_assets.py \
+            --input-wasm target/wasm32-unknown-unknown/release/ade_web_readonly_serial_wasm_bridge.wasm \
+            --generated-dir target/webserial-wasm-product-regenerated
+
+      - name: Validate Web and repository policy after regeneration
+        run: |
+          cd web
+          npx --yes npm@11.13.0 ci --ignore-scripts --no-fund
+          npx --yes npm@11.13.0 run typecheck
+          npx --yes npm@11.13.0 test
+          node --experimental-websocket tests/webserial-readonly-browser-smoke.mjs \
+            ../target/webserial-wasm-product-regenerated /autonomous-drone-expert/
+          cd ..
+          python3 scripts/check_webserial_boundary.py
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+      - name: Commit canonical API147 descriptor outputs
+        run: |
+          git config user.name "FPV-Arabic"
+          git config user.email "295969497+melyanneahmed-rgb@users.noreply.github.com"
+          git add \
+            Cargo.lock \
+            crates/capability/src/lib.rs \
+            crates/capability-resolution/Cargo.toml \
+            crates/capability-resolution/src/lib.rs \
+            crates/web-readonly-serial-wasm-bridge/src/lib.rs \
+            policy/webserial-wasm-assets.json
+          git add -f \
+            web/public/wasm/ade_web_readonly_serial_wasm_bridge.js \
+            web/public/wasm/ade_web_readonly_serial_wasm_bridge_bg.wasm
+          if git diff --cached --quiet; then
+            echo "canonical API147 descriptor outputs already present"
+            exit 0
+          fi
+          git commit -m "build(m3): lock API147 descriptor WASM assets"
+          git push origin HEAD:feat/m3-api147-review-only-descriptor

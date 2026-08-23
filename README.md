@@ -9,8 +9,8 @@ internal implementation details rather than the product identity.
 ## Status
 
 **M1 accepted on simulation; G1 merged; M2 production read-only Web/PWA connection merged;
-M3 read-only profiles and bounded capability-selection evidence implemented. This is not a
-production release and hardware support is not validated.**
+M3 read-only profiles and exact review-only API 1.46/API 1.47 capability descriptors implemented.
+This is not a production release and hardware support is not validated.**
 
 M0 foundations are complete. M1 implements one deliberately narrow vertical slice for the
 Betaflight 4.5.5 `SYSTEM_INIT` beeper bit over project-owned Mock and Replay transports:
