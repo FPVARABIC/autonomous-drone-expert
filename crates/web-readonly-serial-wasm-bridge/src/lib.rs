@@ -11,9 +11,7 @@ use core::fmt;
 use std::collections::VecDeque;
 
 use ade_capability::{CapabilityPackTrust, CapabilityPackWritePolicy};
-use ade_capability_resolution::{
-    ReviewOnlyCapabilityStatus, resolve_review_only_capability,
-};
+use ade_capability_resolution::{ReviewOnlyCapabilityStatus, resolve_review_only_capability};
 use ade_core_api::{ScopeStatus, check_scope};
 use ade_execution::{
     ExecError, IdentificationProgress, IdentificationRequest, IdentificationStage,
@@ -196,9 +194,7 @@ fn capability_evidence(identity: &DeviceIdentity) -> CapabilitySelectionEvidence
             CapabilitySelectionEvidence::UnknownFirmwareFamily
         }
         ReviewOnlyCapabilityStatus::Ambiguous => CapabilitySelectionEvidence::Ambiguous,
-        ReviewOnlyCapabilityStatus::InvalidPack { .. } => {
-            CapabilitySelectionEvidence::InvalidPack
-        }
+        ReviewOnlyCapabilityStatus::InvalidPack { .. } => CapabilitySelectionEvidence::InvalidPack,
     }
 }
 
@@ -243,9 +239,7 @@ fn readonly_selection_evidence(
 const fn read_profile_label(profile_id: ReadonlyIdentityProfileId) -> &'static str {
     match profile_id {
         ReadonlyIdentityProfileId::BetaflightApi146Legacy => "api-1.46-legacy",
-        ReadonlyIdentityProfileId::BetaflightApi147CalendarExtended => {
-            "api-1.47-calendar-extended"
-        }
+        ReadonlyIdentityProfileId::BetaflightApi147CalendarExtended => "api-1.47-calendar-extended",
     }
 }
 
@@ -850,13 +844,11 @@ impl WasmReadonlySerialDiscovery {
                         identity,
                         selection,
                     },
-                    ScopeStatus::Mismatch { field } => {
-                        FinalOutcome::ScopeMismatch {
-                            identity,
-                            field,
-                            selection,
-                        }
-                    }
+                    ScopeStatus::Mismatch { field } => FinalOutcome::ScopeMismatch {
+                        identity,
+                        field,
+                        selection,
+                    },
                     ScopeStatus::NotChecked => {
                         return Err(BridgeError::InvalidState);
                     }
