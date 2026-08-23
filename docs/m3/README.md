@@ -1,6 +1,6 @@
 # M3 — Read-only capability-pack resolution
 
-**Status:** slices 1–7 implemented; all hardware evidence remains unchanged
+**Status:** slices 1–8 implemented; all hardware evidence remains unchanged
 
 M3 begins the firmware capability-pack layer accepted by ADR-0007. This milestone does not add a
 hardware write, a driver, a transport, an arbitrary command table or a signed-pack distribution
@@ -109,15 +109,37 @@ review-only capability decision that produced a completed identity result:
   id, `ReviewOnlyEmbedded` trust and `WritesBlocked` policy.
 - A completed API 1.46 identity outside the exact reviewed descriptor reports
   `no-reviewed-match`; it does not inherit pack trust or a write policy.
-- API 1.47 reports the selected calendar-extended read profile and the same permanent no-write
-  boundary, but reports `not-reviewed` for capability selection. It cannot claim a capability pack
-  until the exact target/version descriptor is reviewed in a separate slice.
+- Before Slice 8, API 1.47 reported the selected calendar-extended read profile and the same
+  permanent no-write boundary, but did not select a capability pack.
 - Unsupported APIs, rejected variants and protocol failures expose no profile or capability
   selection evidence.
 
 The browser host and narrow connection facade preserve these fields only in the in-memory bounded
 result. The ordinary React product UI neither renders nor persists them. The evidence contains no
 raw frame, payload, per-unit signature, USB metadata or new transport authority.
+
+## Slice 8 — exact API 1.47 review-only descriptor
+
+The second embedded descriptor covers only this complete identity tuple:
+
+- family `Betaflight` / exact variant `BTFL`;
+- MSP protocol `0` / API `1.47`;
+- exact calendar bytes `[25, 12, 1]` **and** exact version string `2025.12.1` from the same
+  strict `FC_VERSION` reply;
+- exact target name `SPEEDYBEEF405V4`;
+- trust `ReviewOnlyEmbedded` and policy `WritesBlocked`.
+
+The version model now distinguishes the legacy numeric range from the calendar-extended shape.
+Matching only `[25, 12, 1]` is insufficient: a different string, calendar tuple, API, target,
+variant, or version shape returns `no-reviewed-match`. Malformed descriptors and duplicate matches
+remain fail closed.
+
+The target selector is the project's existing exact proposed target policy; it is not evidence
+that the owner's physical FC has this identity and it does not change the hardware-support matrix.
+The four API 1.47 interface facts remain tied to the pinned official `2025.12.1` provenance records.
+The completed browser result may now carry the stable pack id and its review-only/write-blocked
+metadata in memory. The ordinary React UI still neither renders nor persists this internal
+selection evidence.
 
 ## Safety properties
 
@@ -144,9 +166,11 @@ repository-reviewed descriptive data only and cannot authorize a write.
 
 ## Next M3 work
 
-1. Add a review-only capability descriptor for the newly readable API 1.47 identity only after its
-   exact target/version policy is separately reviewed; a read match must remain `WritesBlocked`.
+1. Define any additional read profile only after separately pinned protocol provenance and exact
+   target/version review; unknown versions remain fail closed.
 2. Keep all real writes blocked until a later write milestone, compatible backup/recovery evidence,
    and separate owner approval.
-3. No new physical operation is required for this software slice; physical evidence remains
+3. Treat signed/checksummed/revocable pack distribution as a later governance slice; embedded
+   review-only descriptors are not distributable trust claims.
+4. No new physical operation is required for this software slice; physical evidence remains
    unchanged until a separately approved hardware observation.

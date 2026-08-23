@@ -23,6 +23,7 @@ dependencies = [
  "ade-capability",
  "ade-facts",
  "ade-protocol-msp",
+ "ade-readonly-profile",
 ]
 
 [[package]]

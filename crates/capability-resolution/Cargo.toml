@@ -10,6 +10,5 @@ publish = false
 [dependencies]
 ade-facts = { path = "../facts" }
 ade-capability = { path = "../capability" }
-
-[dev-dependencies]
 ade-protocol-msp = { path = "../protocol-msp" }
+ade-readonly-profile = { path = "../readonly-profile" }

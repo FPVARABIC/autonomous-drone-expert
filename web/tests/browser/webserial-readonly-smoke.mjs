@@ -561,12 +561,21 @@ async function scenarioH2Api147ReadOnly() {
     "API 1.47 read profile cannot authorize writes",
   );
   assert(
-    run.result.capabilityStatus === "not-reviewed",
-    "API 1.47 capability stays unselected until separate descriptor review",
+    run.result.capabilityStatus === "review-only-match",
+    "API 1.47 exact identity selects the reviewed descriptor",
   );
-  assert(run.result.capabilityPackId === undefined, "API 1.47 selects no capability pack");
-  assert(run.result.capabilityTrust === undefined, "API 1.47 carries no capability trust");
-  assert(run.result.capabilityWritePolicy === undefined, "API 1.47 carries no pack write policy");
+  assert(
+    run.result.capabilityPackId === "bf-2025.12.1-api1.47-speedybeef405v4-review",
+    "API 1.47 carries the stable reviewed pack id",
+  );
+  assert(
+    run.result.capabilityTrust === "review-only-embedded",
+    "API 1.47 carries only repository review trust",
+  );
+  assert(
+    run.result.capabilityWritePolicy === "writes-blocked",
+    "API 1.47 capability remains write blocked",
+  );
   assert(run.result.scopeMismatchField === undefined, "read-only completion is not API unsupported");
   assert(run.result.hardwareObserved === false, "read-only completion is not hardware validation");
   assert(run.port.writes.length === 4, "API 1.47 uses exactly four empty reads");
