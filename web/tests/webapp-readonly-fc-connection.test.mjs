@@ -30,10 +30,10 @@ function numericFixture(source, declaration) {
 }
 
 test("the bounded production host and declaration are byte-locked", () => {
-  assert.equal(sha256(host), "3a94eb8e51bfc5266fd8224d26a5ec037fcae255d8d155ddf2d1472ee99ad31a");
+  assert.equal(sha256(host), "54b73f51a4f5c30e632e9cf8c76a7d1828d240c6af56a784372b079db0719903");
   assert.equal(
     sha256(hostTypes),
-    "e3ca1f8787519c71b54bb79dc00e4d21b78af85e0a202b7acb5547d3a61294bf",
+    "6006c87ab766a56b34d99a262373a4c799583f7e70332139ff96e2cb5387cabc",
   );
 });
 
@@ -130,13 +130,20 @@ test("UI output and state are privacy bounded and make no hardware claim", () =>
     "capabilityTrust",
     "capabilityWritePolicy",
   ];
+  const internalSnapshotEvidence = [
+    "snapshotStatus",
+    "beeperOffFlags",
+    "dshotBeaconTone",
+    "dshotBeaconOffFlags",
+    "systemInitDisabled",
+  ];
   assert.deepEqual(
     [...app.matchAll(/data-identity-field="([A-Za-z]+)"/g)].map((match) => match[1]),
     uiFields,
   );
   assert.deepEqual(
     [...facade.matchAll(/^    ([A-Za-z]+): result\./gm)].map((match) => match[1]),
-    ["outcome", ...uiFields, ...internalSelectionEvidence],
+    ["outcome", ...uiFields, ...internalSelectionEvidence, ...internalSnapshotEvidence],
   );
   const source = `${app}\n${facade}`;
   assert.doesNotMatch(
@@ -149,7 +156,13 @@ test("UI output and state are privacy bounded and make no hardware claim", () =>
   for (const field of internalSelectionEvidence) {
     assert.match(host, new RegExp(`${field}: discovery\\.${field} \\?\\? undefined`));
   }
-  assert.match(facadeTypes, /"API_VERSION"[\s\S]*"FC_VARIANT"[\s\S]*"FC_VERSION"[\s\S]*"BOARD_INFO"/);
+  for (const field of internalSnapshotEvidence) {
+    assert.match(host, new RegExp(`${field}: discovery\\.${field} \\?\\? undefined`));
+  }
+  assert.match(
+    facadeTypes,
+    /"API_VERSION"[\s\S]*"FC_VARIANT"[\s\S]*"FC_VERSION"[\s\S]*"BOARD_INFO"[\s\S]*"BEEPER_CONFIG"/,
+  );
   assert.match(
     facadeTypes,
     /"WrongCommand"[\s\S]*"WrongDirection"[\s\S]*"ErrorReply"[\s\S]*"ReplyMisclassified"[\s\S]*"WrongLength"[\s\S]*"FieldOverrun"[\s\S]*"TrailingPayload"[\s\S]*"InvalidUtf8"/,
@@ -159,12 +172,15 @@ test("UI output and state are privacy bounded and make no hardware claim", () =>
   assert.doesNotMatch(app, /hardwareObserved/);
   assert.doesNotMatch(
     app,
-    /readProfileId|readProfileWriteAuthority|capabilityStatus|capabilityPackId|capabilityTrust|capabilityWritePolicy/,
+    /readProfileId|readProfileWriteAuthority|capabilityStatus|capabilityPackId|capabilityTrust|capabilityWritePolicy|snapshotStatus|beeperOffFlags|dshotBeaconTone|dshotBeaconOffFlags|systemInitDisabled/,
   );
   assert.match(facadeTypes, /"never-authorizes-writes"/);
   assert.match(facadeTypes, /"review-only-match"[\s\S]*"no-reviewed-match"/);
   assert.doesNotMatch(facadeTypes, /"not-reviewed"/);
   assert.match(facadeTypes, /capabilityWritePolicy\?: "writes-blocked"/);
+  assert.match(facadeTypes, /snapshotStatus\?: "beeper-config-complete"/);
+  assert.match(facadeTypes, /systemInitDisabled\?: boolean/);
+  assert.match(host, /case "exchange-identification-read":[\s\S]*case "exchange-snapshot-read":/);
   assert.doesNotMatch(app, /\b(?:CONNECTED|SUPPORTED|VALIDATED)\b/);
   for (const phase of [
     "preparing",

@@ -7,10 +7,12 @@ export type DiagnosticPhase =
   | "FC_VARIANT"
   | "FC_VERSION"
   | "BOARD_INFO"
+  | "BEEPER_CONFIG"
   | "SERIAL_WRITE"
   | "SERIAL_READ"
   | "MSP_FRAME"
   | "IDENTITY_STAGE"
+  | "SNAPSHOT_STAGE"
   | "PORT_CLOSE"
   | "CLEANUP"
   | "UI_BOUNDARY"
@@ -33,6 +35,8 @@ export type DiagnosticEvent =
   | "FRAME_REJECTED"
   | "IDENTITY_STAGE_OK"
   | "IDENTITY_STAGE_FAILED"
+  | "SNAPSHOT_STAGE_OK"
+  | "SNAPSHOT_STAGE_FAILED"
   | "PORT_CLOSE_START"
   | "PORT_CLOSE_OK"
   | "PORT_CLOSE_FAILED"
@@ -42,12 +46,18 @@ export type DiagnosticEvent =
   | "UI_BOUNDARY_FAILED"
   | "FINAL_OK"
   | "FINAL_FAILED";
-export type DiagnosticStage = "API_VERSION" | "FC_VARIANT" | "FC_VERSION" | "BOARD_INFO";
+export type DiagnosticStage =
+  | "API_VERSION"
+  | "FC_VARIANT"
+  | "FC_VERSION"
+  | "BOARD_INFO"
+  | "BEEPER_CONFIG";
 export type DiagnosticCommand =
   | "MSP_API_VERSION"
   | "MSP_FC_VARIANT"
   | "MSP_FC_VERSION"
-  | "MSP_BOARD_INFO";
+  | "MSP_BOARD_INFO"
+  | "MSP_BEEPER_CONFIG";
 export type DiagnosticDirection = "REQUEST" | "REPLY" | "ERROR";
 export type DiagnosticFailureClass =
   | "Unavailable"
@@ -58,6 +68,7 @@ export type DiagnosticFailureClass =
   | "Timeout"
   | "MalformedResponse"
   | "ProtocolIdentityFailure"
+  | "ProtocolSnapshotFailure"
   | "HardwareEvidenceBoundary"
   | "CloseFailure"
   | "Unknown";
@@ -89,6 +100,7 @@ export type DiagnosticOrigin =
   | "SERIAL_TIMEOUT"
   | "MSP_FRAME"
   | "IDENTITY_STAGE"
+  | "SNAPSHOT_STAGE"
   | "DIRECTIVE_REFUSAL"
   | "PORT_CLOSE"
   | "READER_CANCEL"

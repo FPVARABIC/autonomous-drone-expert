@@ -1,16 +1,19 @@
 #![forbid(unsafe_code)]
 
-//! Dedicated WebAssembly facade for read-only Web Serial discovery.
+//! Dedicated WebAssembly facade for bounded read-only Web Serial discovery and snapshot.
 //!
-//! JavaScript receives only three directive kinds: open the explicitly selected port,
-//! exchange one Rust-authorised identification read, and close. It cannot select a command,
-//! construct an MSP frame, provide a `WriteApproval`, or obtain a generic transport effect.
-//! Raw response chunks return to the bounded Rust MSP accumulator.
+//! JavaScript receives only four directive labels: open the explicitly selected port, exchange an
+//! identity read, exchange the one reviewed snapshot read, and close. The API 1.46 path may issue the
+//! exact four-read identity prefix plus one beeper snapshot read. JavaScript cannot select a
+//! command, construct an MSP frame, provide a `WriteApproval`, or obtain a generic transport
+//! effect. Raw response chunks return to the bounded Rust MSP accumulator.
 
 use core::fmt;
 use std::collections::VecDeque;
 
-use ade_capability::{CapabilityPackTrust, CapabilityPackWritePolicy};
+use ade_capability::{
+    CapabilityPackTrust, CapabilityPackWritePolicy, m3_review_only_betaflight_4_5_5_pack,
+};
 use ade_capability_resolution::{
     ReviewOnlyCapabilityStatus, resolve_review_only_capability,
     resolve_review_only_read_profile_capability,
@@ -18,12 +21,12 @@ use ade_capability_resolution::{
 use ade_core_api::{ScopeStatus, check_scope};
 use ade_execution::{
     ExecError, IdentificationProgress, IdentificationRequest, IdentificationStage,
-    ReadonlyIdentification, ReadonlyProfileIdentity,
+    ReadonlyBeeperSnapshotRead, ReadonlyIdentification, ReadonlyProfileIdentity,
 };
 use ade_facts::DeviceIdentity;
 use ade_protocol_msp::{
-    ApiVersion, CommandId, Direction, MspError, MspV1ResponseAccumulator, ResponseProgress,
-    decode_frame,
+    ApiVersion, BeeperConfigSnapshot, CommandId, Direction, MspError, MspV1ResponseAccumulator,
+    ResponseProgress, decode_frame,
 };
 use ade_readonly_profile::{ReadProfileWriteAuthority, ReadonlyIdentityProfileId};
 use ade_runtime_ports::{
@@ -136,6 +139,7 @@ enum FinalOutcome {
     InScope {
         identity: DeviceIdentity,
         selection: ReadSelectionEvidence,
+        snapshot: BeeperConfigSnapshot,
     },
     ScopeMismatch {
         identity: DeviceIdentity,
@@ -156,8 +160,49 @@ enum FinalOutcome {
     },
     Failed {
         class: &'static str,
-        diagnostic: Option<IdentityFailureDiagnostic>,
+        diagnostic: Option<ReadonlyFailureDiagnostic>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadonlyStage {
+    ApiVersion,
+    FcVariant,
+    FcVersion,
+    BoardInfo,
+    BeeperConfig,
+}
+
+impl ReadonlyStage {
+    fn from_identification(stage: IdentificationStage) -> Result<Self, BridgeError> {
+        match stage {
+            IdentificationStage::ApiVersion => Ok(Self::ApiVersion),
+            IdentificationStage::FcVariant => Ok(Self::FcVariant),
+            IdentificationStage::FcVersion => Ok(Self::FcVersion),
+            IdentificationStage::BoardInfo => Ok(Self::BoardInfo),
+            IdentificationStage::Complete => Err(BridgeError::InvalidState),
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::ApiVersion => "API_VERSION",
+            Self::FcVariant => "FC_VARIANT",
+            Self::FcVersion => "FC_VERSION",
+            Self::BoardInfo => "BOARD_INFO",
+            Self::BeeperConfig => "BEEPER_CONFIG",
+        }
+    }
+
+    const fn command(self) -> CommandId {
+        match self {
+            Self::ApiVersion => CommandId::ApiVersion,
+            Self::FcVariant => CommandId::FcVariant,
+            Self::FcVersion => CommandId::FcVersion,
+            Self::BoardInfo => CommandId::BoardInfo,
+            Self::BeeperConfig => CommandId::BeeperConfig,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +329,25 @@ const fn capability_write_policy_label(policy: CapabilityPackWritePolicy) -> &'s
     }
 }
 
+fn api146_snapshot_is_reviewed(selection: ReadSelectionEvidence) -> bool {
+    if selection.profile_id != ReadonlyIdentityProfileId::BetaflightApi146Legacy
+        || selection.write_authority != ReadProfileWriteAuthority::NeverAuthorizesWrites
+    {
+        return false;
+    }
+    match selection.capability {
+        CapabilitySelectionEvidence::Match {
+            pack_id,
+            trust: CapabilityPackTrust::ReviewOnlyEmbedded,
+            write_policy: CapabilityPackWritePolicy::WritesBlocked,
+        } => pack_id == m3_review_only_betaflight_4_5_5_pack().pack_id,
+        CapabilitySelectionEvidence::NoMatch
+        | CapabilitySelectionEvidence::UnknownFirmwareFamily
+        | CapabilitySelectionEvidence::Ambiguous
+        | CapabilitySelectionEvidence::InvalidPack => false,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IdentityFailureReason {
     PayloadTooLong,
@@ -357,58 +421,32 @@ impl IdentityFailureReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct IdentityFailureDiagnostic {
-    stage: IdentificationStage,
+struct ReadonlyFailureDiagnostic {
+    stage: ReadonlyStage,
     reason: IdentityFailureReason,
 }
 
-impl IdentityFailureDiagnostic {
-    const fn from_msp(stage: IdentificationStage, error: &MspError) -> Self {
+impl ReadonlyFailureDiagnostic {
+    const fn from_msp(stage: ReadonlyStage, error: &MspError) -> Self {
         Self {
             stage,
             reason: IdentityFailureReason::from_msp(error),
         }
     }
 
-    const fn from_exec(stage: IdentificationStage, error: &ExecError) -> Self {
+    const fn from_exec(stage: ReadonlyStage, error: &ExecError) -> Self {
         Self {
             stage,
             reason: IdentityFailureReason::from_exec(error),
         }
     }
 
-    const fn stage_label(self) -> Option<&'static str> {
-        match self.stage {
-            IdentificationStage::ApiVersion => Some("API_VERSION"),
-            IdentificationStage::FcVariant => Some("FC_VARIANT"),
-            IdentificationStage::FcVersion => Some("FC_VERSION"),
-            IdentificationStage::BoardInfo => Some("BOARD_INFO"),
-            IdentificationStage::Complete => None,
-        }
+    const fn stage_label(self) -> &'static str {
+        self.stage.label()
     }
 }
 
 const TRACE_EVENT_LIMIT: usize = 32;
-
-const fn stage_label(stage: IdentificationStage) -> Option<&'static str> {
-    match stage {
-        IdentificationStage::ApiVersion => Some("API_VERSION"),
-        IdentificationStage::FcVariant => Some("FC_VARIANT"),
-        IdentificationStage::FcVersion => Some("FC_VERSION"),
-        IdentificationStage::BoardInfo => Some("BOARD_INFO"),
-        IdentificationStage::Complete => None,
-    }
-}
-
-const fn stage_command(stage: IdentificationStage) -> Option<CommandId> {
-    match stage {
-        IdentificationStage::ApiVersion => Some(CommandId::ApiVersion),
-        IdentificationStage::FcVariant => Some(CommandId::FcVariant),
-        IdentificationStage::FcVersion => Some(CommandId::FcVersion),
-        IdentificationStage::BoardInfo => Some(CommandId::BoardInfo),
-        IdentificationStage::Complete => None,
-    }
-}
 
 const fn command_label(command: CommandId) -> Option<&'static str> {
     match command {
@@ -416,6 +454,7 @@ const fn command_label(command: CommandId) -> Option<&'static str> {
         CommandId::FcVariant => Some("MSP_FC_VARIANT"),
         CommandId::FcVersion => Some("MSP_FC_VERSION"),
         CommandId::BoardInfo => Some("MSP_BOARD_INFO"),
+        CommandId::BeeperConfig => Some("MSP_BEEPER_CONFIG"),
         _ => None,
     }
 }
@@ -433,7 +472,7 @@ struct RustTraceEvent {
     layer: &'static str,
     phase: &'static str,
     event: &'static str,
-    stage: IdentificationStage,
+    stage: ReadonlyStage,
     command: CommandId,
     byte_count: Option<u32>,
     direction: Option<Direction>,
@@ -470,7 +509,7 @@ impl WasmReadonlyTraceEvent {
 
     #[wasm_bindgen(getter)]
     pub fn stage(&self) -> Option<String> {
-        stage_label(self.event.stage).map(str::to_owned)
+        Some(self.event.stage.label().to_owned())
     }
 
     #[wasm_bindgen(getter)]
@@ -527,7 +566,7 @@ impl WasmReadonlySerialDirective {
         self.kind.to_owned()
     }
 
-    /// Bytes exist only on an `exchange-identification-read` directive and were already
+    /// Bytes exist only on a fixed identification or snapshot read directive and were already
     /// authorised and framed by Rust.
     #[wasm_bindgen(getter)]
     pub fn bytes(&self) -> Vec<u8> {
@@ -535,11 +574,15 @@ impl WasmReadonlySerialDirective {
     }
 }
 
-fn allowed_identification(command: CommandId) -> bool {
-    matches!(
-        command,
-        CommandId::ApiVersion | CommandId::FcVariant | CommandId::FcVersion | CommandId::BoardInfo
-    )
+const fn readonly_directive_kind(command: CommandId) -> Option<&'static str> {
+    match command {
+        CommandId::ApiVersion
+        | CommandId::FcVariant
+        | CommandId::FcVersion
+        | CommandId::BoardInfo => Some("exchange-identification-read"),
+        CommandId::BeeperConfig => Some("exchange-snapshot-read"),
+        CommandId::SetBeeperConfig | CommandId::EepromWrite | CommandId::Reboot => None,
+    }
 }
 
 fn directive_from(
@@ -577,8 +620,8 @@ fn directive_from(
             }
             let frame = decode_frame(packet.bytes())?;
             let command = frame.known_command().ok_or(BridgeError::DirectiveRefused)?;
+            let kind = readonly_directive_kind(command).ok_or(BridgeError::DirectiveRefused)?;
             if frame.direction != Direction::Request
-                || !allowed_identification(command)
                 || command != expected
                 || frame.payload_len() != 0
             {
@@ -586,7 +629,7 @@ fn directive_from(
             }
             Ok(WasmReadonlySerialDirective {
                 request_id: request_id.get().to_string(),
-                kind: "exchange-identification-read",
+                kind,
                 bytes: packet.bytes().to_vec(),
             })
         }
@@ -600,6 +643,9 @@ fn directive_from(
 pub struct WasmReadonlySerialDiscovery {
     coordinator: IoCoordinator,
     identification: ReadonlyIdentification,
+    snapshot_read: Option<ReadonlyBeeperSnapshotRead>,
+    pending_snapshot_identity: Option<DeviceIdentity>,
+    pending_snapshot_selection: Option<ReadSelectionEvidence>,
     phase: Phase,
     pending_id: Option<RequestId>,
     accumulator: Option<MspV1ResponseAccumulator>,
@@ -616,6 +662,9 @@ impl WasmReadonlySerialDiscovery {
         Ok(Self {
             coordinator: IoCoordinator::new(),
             identification: ReadonlyIdentification::new(state)?,
+            snapshot_read: None,
+            pending_snapshot_identity: None,
+            pending_snapshot_selection: None,
             phase: Phase::Ready,
             pending_id: None,
             accumulator: None,
@@ -633,11 +682,11 @@ impl WasmReadonlySerialDiscovery {
 
     fn push_directive_trace(
         &mut self,
-        stage: IdentificationStage,
+        stage: ReadonlyStage,
         command: CommandId,
         byte_count: usize,
     ) -> Result<(), BridgeError> {
-        let phase = stage_label(stage).ok_or(BridgeError::InvalidState)?;
+        let phase = stage.label();
         let byte_count = u32::try_from(byte_count).map_err(|_| BridgeError::Boundary)?;
         self.push_trace(RustTraceEvent {
             layer: "RUST",
@@ -657,7 +706,7 @@ impl WasmReadonlySerialDiscovery {
     fn push_frame_trace(
         &mut self,
         event: &'static str,
-        stage: IdentificationStage,
+        stage: ReadonlyStage,
         command: CommandId,
         direction: Option<Direction>,
         failure_class: Option<&'static str>,
@@ -680,7 +729,7 @@ impl WasmReadonlySerialDiscovery {
     fn push_identity_trace(
         &mut self,
         event: &'static str,
-        stage: IdentificationStage,
+        stage: ReadonlyStage,
         command: CommandId,
         failure_reason: Option<IdentityFailureReason>,
     ) {
@@ -695,6 +744,25 @@ impl WasmReadonlySerialDiscovery {
             failure_class: failure_reason.map(|_| "ProtocolIdentityFailure"),
             failure_reason,
             origin: failure_reason.map(|_| "IDENTITY_STAGE"),
+        });
+    }
+
+    fn push_snapshot_trace(
+        &mut self,
+        event: &'static str,
+        failure_reason: Option<IdentityFailureReason>,
+    ) {
+        self.push_trace(RustTraceEvent {
+            layer: "RUST",
+            phase: "SNAPSHOT_STAGE",
+            event,
+            stage: ReadonlyStage::BeeperConfig,
+            command: CommandId::BeeperConfig,
+            byte_count: None,
+            direction: None,
+            failure_class: failure_reason.map(|_| "ProtocolSnapshotFailure"),
+            failure_reason,
+            origin: failure_reason.map(|_| "SNAPSHOT_STAGE"),
         });
     }
 
@@ -733,7 +801,7 @@ impl WasmReadonlySerialDiscovery {
     }
 
     fn next_exchange(&mut self) -> Result<WasmReadonlySerialDirective, BridgeError> {
-        let stage = self.identification.stage();
+        let stage = ReadonlyStage::from_identification(self.identification.stage())?;
         let request: IdentificationRequest = self.identification.next_request()?;
         let command = request.command();
         let packet = OutboundPacket::read_only(request.bytes().to_vec())?;
@@ -744,6 +812,37 @@ impl WasmReadonlySerialDiscovery {
             Phase::Exchanging,
         )?;
         self.push_directive_trace(stage, command, directive.bytes.len())?;
+        Ok(directive)
+    }
+
+    fn begin_snapshot_exchange(
+        &mut self,
+        identity: DeviceIdentity,
+        selection: ReadSelectionEvidence,
+    ) -> Result<WasmReadonlySerialDirective, BridgeError> {
+        if self.snapshot_read.is_some()
+            || self.pending_snapshot_identity.is_some()
+            || self.pending_snapshot_selection.is_some()
+        {
+            return Err(BridgeError::InvalidState);
+        }
+        let mut snapshot_read = ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead)?;
+        let request = snapshot_read.next_request()?;
+        let command = request.command();
+        if command != CommandId::BeeperConfig {
+            return Err(BridgeError::InvalidState);
+        }
+        let packet = OutboundPacket::read_only(request.bytes().to_vec())?;
+        self.accumulator = Some(MspV1ResponseAccumulator::new(command));
+        self.snapshot_read = Some(snapshot_read);
+        self.pending_snapshot_identity = Some(identity);
+        self.pending_snapshot_selection = Some(selection);
+        let directive = self.begin_effect(
+            TransportEffect::Exchange(packet),
+            Some(command),
+            Phase::Exchanging,
+        )?;
+        self.push_directive_trace(ReadonlyStage::BeeperConfig, command, directive.bytes.len())?;
         Ok(directive)
     }
 
@@ -785,15 +884,145 @@ impl WasmReadonlySerialDiscovery {
         &mut self,
         request_id: RequestId,
         label: &'static str,
-        diagnostic: Option<IdentityFailureDiagnostic>,
+        diagnostic: Option<ReadonlyFailureDiagnostic>,
     ) -> Result<WasmReadonlySerialDirective, BridgeError> {
         self.coordinator.cancel_transport(request_id)?;
         self.pending_id = None;
+        self.snapshot_read = None;
+        self.pending_snapshot_identity = None;
+        self.pending_snapshot_selection = None;
         self.outcome = Some(FinalOutcome::Failed {
             class: label,
             diagnostic,
         });
         self.start_close()
+    }
+
+    fn current_stage(&self) -> Result<ReadonlyStage, BridgeError> {
+        if self.snapshot_read.is_some() {
+            Ok(ReadonlyStage::BeeperConfig)
+        } else {
+            ReadonlyStage::from_identification(self.identification.stage())
+        }
+    }
+
+    fn accept_snapshot_frame(
+        &mut self,
+        frame: &ade_protocol_msp::Frame,
+    ) -> Result<Option<WasmReadonlySerialDirective>, BridgeError> {
+        let result = self
+            .snapshot_read
+            .as_mut()
+            .ok_or(BridgeError::InvalidState)?
+            .accept_response(frame);
+        match result {
+            Ok(snapshot) => {
+                self.push_snapshot_trace("SNAPSHOT_STAGE_OK", None);
+                if !self
+                    .snapshot_read
+                    .as_ref()
+                    .is_some_and(ReadonlyBeeperSnapshotRead::is_complete)
+                {
+                    return Err(BridgeError::InvalidState);
+                }
+                self.snapshot_read = None;
+                let identity = self
+                    .pending_snapshot_identity
+                    .take()
+                    .ok_or(BridgeError::InvalidState)?;
+                let selection = self
+                    .pending_snapshot_selection
+                    .take()
+                    .ok_or(BridgeError::InvalidState)?;
+                self.outcome = Some(FinalOutcome::InScope {
+                    identity,
+                    selection,
+                    snapshot,
+                });
+                self.start_close().map(Some)
+            }
+            Err(error) => {
+                let diagnostic =
+                    ReadonlyFailureDiagnostic::from_exec(ReadonlyStage::BeeperConfig, &error);
+                self.push_snapshot_trace("SNAPSHOT_STAGE_FAILED", Some(diagnostic.reason));
+                self.snapshot_read = None;
+                self.pending_snapshot_identity = None;
+                self.pending_snapshot_selection = None;
+                self.outcome = Some(FinalOutcome::Failed {
+                    class: "ProtocolSnapshotFailure",
+                    diagnostic: Some(diagnostic),
+                });
+                self.start_close().map(Some)
+            }
+        }
+    }
+
+    fn accept_identification_frame(
+        &mut self,
+        stage: ReadonlyStage,
+        command: CommandId,
+        frame: &ade_protocol_msp::Frame,
+    ) -> Result<Option<WasmReadonlySerialDirective>, BridgeError> {
+        match self.identification.accept_response(frame) {
+            Ok(IdentificationProgress::Complete(identity)) => {
+                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
+                let selection = legacy_selection_evidence(&identity)?;
+                match check_scope(&identity) {
+                    ScopeStatus::InScope => {
+                        if !api146_snapshot_is_reviewed(selection) {
+                            return Err(BridgeError::InvalidState);
+                        }
+                        self.begin_snapshot_exchange(identity, selection).map(Some)
+                    }
+                    ScopeStatus::Mismatch { field } => {
+                        self.outcome = Some(FinalOutcome::ScopeMismatch {
+                            identity,
+                            field,
+                            selection,
+                        });
+                        self.start_close().map(Some)
+                    }
+                    ScopeStatus::NotChecked => Err(BridgeError::InvalidState),
+                }
+            }
+            Ok(IdentificationProgress::ReadOnlyComplete(identity)) => {
+                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
+                let selection = readonly_selection_evidence(&identity)?;
+                self.outcome = Some(FinalOutcome::ReadOnlyComplete {
+                    identity,
+                    selection,
+                });
+                self.start_close().map(Some)
+            }
+            Ok(IdentificationProgress::Pending) => {
+                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
+                self.next_exchange().map(Some)
+            }
+            Ok(IdentificationProgress::ApiScopeMismatch { api, field }) => {
+                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
+                self.outcome = Some(FinalOutcome::ApiScopeMismatch { api, field });
+                self.start_close().map(Some)
+            }
+            Ok(IdentificationProgress::ReadProfileMismatch { api, field }) => {
+                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
+                self.outcome = Some(FinalOutcome::ReadProfileMismatch { api, field });
+                self.start_close().map(Some)
+            }
+            Err(error) => {
+                let diagnostic = ReadonlyFailureDiagnostic::from_exec(stage, &error);
+                self.push_identity_trace(
+                    "IDENTITY_STAGE_FAILED",
+                    stage,
+                    command,
+                    Some(diagnostic.reason),
+                );
+                self.outcome = Some(FinalOutcome::Failed {
+                    class: "ProtocolIdentityFailure",
+                    diagnostic: Some(diagnostic),
+                });
+                self.start_close().map(Some)
+            }
+        }
     }
 
     fn accept_chunk(
@@ -802,8 +1031,8 @@ impl WasmReadonlySerialDiscovery {
         chunk: &[u8],
     ) -> Result<Option<WasmReadonlySerialDirective>, BridgeError> {
         let request_id = self.verify_pending(request_id, Phase::Exchanging)?;
-        let stage = self.identification.stage();
-        let command = stage_command(stage).ok_or(BridgeError::InvalidState)?;
+        let stage = self.current_stage()?;
+        let command = stage.command();
         let progress = match self
             .accumulator
             .as_mut()
@@ -812,7 +1041,7 @@ impl WasmReadonlySerialDiscovery {
         {
             Ok(progress) => progress,
             Err(error) => {
-                let diagnostic = IdentityFailureDiagnostic::from_msp(stage, &error);
+                let diagnostic = ReadonlyFailureDiagnostic::from_msp(stage, &error);
                 self.push_frame_trace(
                     "FRAME_REJECTED",
                     stage,
@@ -845,63 +1074,10 @@ impl WasmReadonlySerialDiscovery {
         })?;
         self.pending_id = None;
         self.accumulator = None;
-        match self.identification.accept_response(&frame) {
-            Ok(IdentificationProgress::Complete(identity)) => {
-                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
-                let selection = legacy_selection_evidence(&identity)?;
-                self.outcome = Some(match check_scope(&identity) {
-                    ScopeStatus::InScope => FinalOutcome::InScope {
-                        identity,
-                        selection,
-                    },
-                    ScopeStatus::Mismatch { field } => FinalOutcome::ScopeMismatch {
-                        identity,
-                        field,
-                        selection,
-                    },
-                    ScopeStatus::NotChecked => {
-                        return Err(BridgeError::InvalidState);
-                    }
-                });
-                self.start_close().map(Some)
-            }
-            Ok(IdentificationProgress::ReadOnlyComplete(identity)) => {
-                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
-                let selection = readonly_selection_evidence(&identity)?;
-                self.outcome = Some(FinalOutcome::ReadOnlyComplete {
-                    identity,
-                    selection,
-                });
-                self.start_close().map(Some)
-            }
-            Ok(IdentificationProgress::Pending) => {
-                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
-                self.next_exchange().map(Some)
-            }
-            Ok(IdentificationProgress::ApiScopeMismatch { api, field }) => {
-                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
-                self.outcome = Some(FinalOutcome::ApiScopeMismatch { api, field });
-                self.start_close().map(Some)
-            }
-            Ok(IdentificationProgress::ReadProfileMismatch { api, field }) => {
-                self.push_identity_trace("IDENTITY_STAGE_OK", stage, command, None);
-                self.outcome = Some(FinalOutcome::ReadProfileMismatch { api, field });
-                self.start_close().map(Some)
-            }
-            Err(error) => {
-                let diagnostic = IdentityFailureDiagnostic::from_exec(stage, &error);
-                self.push_identity_trace(
-                    "IDENTITY_STAGE_FAILED",
-                    stage,
-                    command,
-                    Some(diagnostic.reason),
-                );
-                self.outcome = Some(FinalOutcome::Failed {
-                    class: "ProtocolIdentityFailure",
-                    diagnostic: Some(diagnostic),
-                });
-                self.start_close().map(Some)
-            }
+        if stage == ReadonlyStage::BeeperConfig {
+            self.accept_snapshot_frame(&frame)
+        } else {
+            self.accept_identification_frame(stage, command, &frame)
         }
     }
 
@@ -917,6 +1093,9 @@ impl WasmReadonlySerialDiscovery {
             result: TransportResult::Exchange(Err(failure)),
         })?;
         self.pending_id = None;
+        self.snapshot_read = None;
+        self.pending_snapshot_identity = None;
+        self.pending_snapshot_selection = None;
         self.outcome = Some(FinalOutcome::Failed {
             class: failure_label(failure),
             diagnostic: None,
@@ -966,6 +1145,13 @@ impl WasmReadonlySerialDiscovery {
             FinalOutcome::InScope { selection, .. }
             | FinalOutcome::ScopeMismatch { selection, .. }
             | FinalOutcome::ReadOnlyComplete { selection, .. } => Some(*selection),
+            _ => None,
+        }
+    }
+
+    fn snapshot(&self) -> Option<&BeeperConfigSnapshot> {
+        match self.outcome.as_ref()? {
+            FinalOutcome::InScope { snapshot, .. } => Some(snapshot),
             _ => None,
         }
     }
@@ -1069,14 +1255,14 @@ impl WasmReadonlySerialDiscovery {
 
     /// The fixed identity stage at which a protocol failure occurred.
     ///
-    /// This getter exposes only one of four stable labels and never command bytes or payload.
+    /// This getter exposes only a fixed read-stage label and never command bytes or payload.
     #[wasm_bindgen(getter, js_name = failureStage)]
     pub fn failure_stage(&self) -> Option<String> {
         match &self.outcome {
             Some(FinalOutcome::Failed {
                 diagnostic: Some(diagnostic),
                 ..
-            }) => diagnostic.stage_label().map(str::to_owned),
+            }) => Some(diagnostic.stage_label().to_owned()),
             _ => None,
         }
     }
@@ -1208,6 +1394,38 @@ impl WasmReadonlySerialDiscovery {
         }
     }
 
+    /// Stable marker proving the exact typed nine-byte snapshot completed in Rust.
+    #[wasm_bindgen(getter, js_name = snapshotStatus)]
+    pub fn snapshot_status(&self) -> Option<String> {
+        self.snapshot().map(|_| "beeper-config-complete".to_owned())
+    }
+
+    /// Typed beeper disable flags from the reviewed snapshot layout.
+    #[wasm_bindgen(getter, js_name = beeperOffFlags)]
+    pub fn beeper_off_flags(&self) -> Option<u32> {
+        self.snapshot().map(|snapshot| snapshot.beeper_off_flags)
+    }
+
+    /// Typed DShot beacon tone from the reviewed snapshot layout.
+    #[wasm_bindgen(getter, js_name = dshotBeaconTone)]
+    pub fn dshot_beacon_tone(&self) -> Option<u8> {
+        self.snapshot().map(|snapshot| snapshot.dshot_beacon_tone)
+    }
+
+    /// Typed DShot beacon disable flags from the reviewed snapshot layout.
+    #[wasm_bindgen(getter, js_name = dshotBeaconOffFlags)]
+    pub fn dshot_beacon_off_flags(&self) -> Option<u32> {
+        self.snapshot()
+            .map(|snapshot| snapshot.dshot_beacon_off_flags)
+    }
+
+    /// Derived state of the one bit targeted by the simulation-only M1 slice.
+    #[wasm_bindgen(getter, js_name = systemInitDisabled)]
+    pub fn system_init_disabled(&self) -> Option<bool> {
+        self.snapshot()
+            .map(BeeperConfigSnapshot::system_init_disabled)
+    }
+
     #[wasm_bindgen(getter, js_name = hardwareObserved)]
     pub fn hardware_observed(&self) -> bool {
         false
@@ -1246,6 +1464,15 @@ mod tests {
 
     fn valid_board_payload() -> Vec<u8> {
         board_payload("SPEEDYBEEF405V4")
+    }
+
+    fn valid_snapshot_payload() -> Vec<u8> {
+        BeeperConfigSnapshot {
+            beeper_off_flags: ade_protocol_msp::SYSTEM_INIT_OFF_MASK,
+            dshot_beacon_tone: 3,
+            dshot_beacon_off_flags: 0x0102_0304,
+        }
+        .to_reply_payload()
     }
 
     fn feed_reply(
@@ -1338,6 +1565,33 @@ mod tests {
     }
 
     #[test]
+    fn the_only_additional_read_directive_is_the_empty_beeper_snapshot_request() {
+        let bytes =
+            ade_protocol_msp::encode_frame(Direction::Request, CommandId::BeeperConfig, &[])
+                .unwrap();
+        let packet = OutboundPacket::read_only(bytes.clone()).unwrap();
+        let directive = directive_from(
+            transport_effect(TransportEffect::Exchange(packet)),
+            Some(CommandId::BeeperConfig),
+        )
+        .unwrap();
+        assert_eq!(directive.kind, "exchange-snapshot-read");
+        assert_eq!(directive.bytes, bytes);
+
+        let with_payload =
+            ade_protocol_msp::encode_frame(Direction::Request, CommandId::BeeperConfig, &[0])
+                .unwrap();
+        let packet = OutboundPacket::read_only(with_payload).unwrap();
+        assert!(
+            directive_from(
+                transport_effect(TransportEffect::Exchange(packet)),
+                Some(CommandId::BeeperConfig),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn unsupported_api_versions_close_after_only_the_api_read() {
         for (payload, expected_api, expected_field) in [
             ([0, 1, 45], "1.45", "msp_api_version"),
@@ -1384,8 +1638,7 @@ mod tests {
                 1,
             );
             assert!(events.iter().all(|event| {
-                event.stage == IdentificationStage::ApiVersion
-                    && event.command == CommandId::ApiVersion
+                event.stage == ReadonlyStage::ApiVersion && event.command == CommandId::ApiVersion
             }));
         }
     }
@@ -1455,6 +1708,9 @@ mod tests {
             bridge.capability_write_policy().as_deref(),
             Some("writes-blocked")
         );
+        assert!(bridge.snapshot_status().is_none());
+        assert!(bridge.beeper_off_flags().is_none());
+        assert!(bridge.system_init_disabled().is_none());
         bridge.accept_close(&close.request_id, None).unwrap();
         assert_eq!(bridge.outcome_kind(), "read-only-complete");
         assert!(!bridge.hardware_observed());
@@ -1792,7 +2048,7 @@ mod tests {
                 &payload,
                 (
                     "MalformedResponse",
-                    stage_label(stage).unwrap(),
+                    ReadonlyStage::from_identification(stage).unwrap().label(),
                     "WrongCommand",
                 ),
             );
@@ -1806,7 +2062,7 @@ mod tests {
                 &payload,
                 (
                     "MalformedResponse",
-                    stage_label(stage).unwrap(),
+                    ReadonlyStage::from_identification(stage).unwrap().label(),
                     "WrongDirection",
                 ),
             );
@@ -1820,7 +2076,7 @@ mod tests {
                 &payload,
                 (
                     "ProtocolIdentityFailure",
-                    stage_label(stage).unwrap(),
+                    ReadonlyStage::from_identification(stage).unwrap().label(),
                     "ErrorReply",
                 ),
             );
@@ -1838,7 +2094,7 @@ mod tests {
         assert_eq!(directive.layer, "RUST");
         assert_eq!(directive.phase, "API_VERSION");
         assert_eq!(directive.event, "DIRECTIVE");
-        assert_eq!(directive.stage, IdentificationStage::ApiVersion);
+        assert_eq!(directive.stage, ReadonlyStage::ApiVersion);
         assert_eq!(directive.command, CommandId::ApiVersion);
         assert_eq!(directive.byte_count, Some(6));
         assert_eq!(directive.direction, Some(Direction::Request));
@@ -1874,11 +2130,11 @@ mod tests {
         assert_eq!(identity_event.layer, "RUST");
         assert_eq!(identity_event.phase, "IDENTITY_STAGE");
         assert_eq!(identity_event.event, "IDENTITY_STAGE_OK");
-        assert_eq!(identity_event.stage, IdentificationStage::ApiVersion);
+        assert_eq!(identity_event.stage, ReadonlyStage::ApiVersion);
         assert_eq!(identity_event.failure_reason, None);
 
         let next_directive = bridge.take_trace_event().unwrap().event;
-        assert_eq!(next_directive.stage, IdentificationStage::FcVariant);
+        assert_eq!(next_directive.stage, ReadonlyStage::FcVariant);
         assert_eq!(next_directive.command, CommandId::FcVariant);
         assert!(bridge.take_trace_event().is_none());
     }
@@ -1898,7 +2154,7 @@ mod tests {
 
         let rejected = bridge.take_trace_event().unwrap().event;
         assert_eq!(rejected.event, "FRAME_REJECTED");
-        assert_eq!(rejected.stage, IdentificationStage::ApiVersion);
+        assert_eq!(rejected.stage, ReadonlyStage::ApiVersion);
         assert_eq!(rejected.command, CommandId::ApiVersion);
         assert_eq!(rejected.byte_count, None);
         assert_eq!(rejected.direction, None);
@@ -1912,7 +2168,7 @@ mod tests {
     }
 
     #[test]
-    fn randomized_chunk_segmentation_preserves_the_exact_four_stage_trace() {
+    fn randomized_chunk_segmentation_preserves_identity_and_snapshot_trace() {
         for initial_seed in 1_u32..=64 {
             let mut seed = initial_seed;
             let mut bridge = WasmReadonlySerialDiscovery::create().unwrap();
@@ -1923,6 +2179,7 @@ mod tests {
                 (CommandId::FcVariant, b"BTFL".to_vec()),
                 (CommandId::FcVersion, vec![4, 5, 5]),
                 (CommandId::BoardInfo, valid_board_payload()),
+                (CommandId::BeeperConfig, valid_snapshot_payload()),
             ];
 
             for (command, payload) in replies {
@@ -1947,12 +2204,12 @@ mod tests {
             assert_eq!(directive.kind, "close");
 
             let events: Vec<_> = bridge.trace_events.drain(..).collect();
-            assert_eq!(events.len(), 12);
+            assert_eq!(events.len(), 15);
             for (index, stage) in [
-                IdentificationStage::ApiVersion,
-                IdentificationStage::FcVariant,
-                IdentificationStage::FcVersion,
-                IdentificationStage::BoardInfo,
+                ReadonlyStage::ApiVersion,
+                ReadonlyStage::FcVariant,
+                ReadonlyStage::FcVersion,
+                ReadonlyStage::BoardInfo,
             ]
             .into_iter()
             .enumerate()
@@ -1963,18 +2220,38 @@ mod tests {
                 assert_eq!(triplet[2].event, "IDENTITY_STAGE_OK");
                 assert!(triplet.iter().all(|event| event.stage == stage));
             }
+            let snapshot = &events[12..15];
+            assert_eq!(snapshot[0].event, "DIRECTIVE");
+            assert_eq!(snapshot[1].event, "FRAME_ACCEPTED");
+            assert_eq!(snapshot[2].event, "SNAPSHOT_STAGE_OK");
+            assert!(
+                snapshot
+                    .iter()
+                    .all(|event| event.stage == ReadonlyStage::BeeperConfig)
+            );
         }
     }
 
     #[test]
     fn successful_identity_path_has_no_failure_diagnostic() {
         let (mut bridge, exchange) = bridge_at(IdentificationStage::BoardInfo);
-        let close = feed_reply(
+        let snapshot = feed_reply(
             &mut bridge,
             &exchange,
             Direction::Reply,
             CommandId::BoardInfo,
             &valid_board_payload(),
+        );
+        assert_eq!(snapshot.kind, "exchange-snapshot-read");
+        let request = decode_frame(&snapshot.bytes).unwrap();
+        assert_eq!(request.known_command(), Some(CommandId::BeeperConfig));
+        assert_eq!(request.payload_len(), 0);
+        let close = feed_reply(
+            &mut bridge,
+            &snapshot,
+            Direction::Reply,
+            CommandId::BeeperConfig,
+            &valid_snapshot_payload(),
         );
         assert_eq!(close.kind, "close");
         assert!(bridge.failure_class().is_none());
@@ -2003,7 +2280,72 @@ mod tests {
             bridge.capability_write_policy().as_deref(),
             Some("writes-blocked")
         );
+        assert_eq!(
+            bridge.snapshot_status().as_deref(),
+            Some("beeper-config-complete")
+        );
+        assert_eq!(
+            bridge.beeper_off_flags(),
+            Some(ade_protocol_msp::SYSTEM_INIT_OFF_MASK)
+        );
+        assert_eq!(bridge.dshot_beacon_tone(), Some(3));
+        assert_eq!(bridge.dshot_beacon_off_flags(), Some(0x0102_0304));
+        assert_eq!(bridge.system_init_disabled(), Some(true));
         assert!(!bridge.hardware_observed());
+    }
+
+    #[test]
+    fn snapshot_payload_failures_are_typed_and_fail_closed() {
+        let (mut bridge, board) = bridge_at(IdentificationStage::BoardInfo);
+        let snapshot = feed_reply(
+            &mut bridge,
+            &board,
+            Direction::Reply,
+            CommandId::BoardInfo,
+            &valid_board_payload(),
+        );
+        assert_failure(
+            bridge,
+            snapshot,
+            Direction::Reply,
+            CommandId::BeeperConfig,
+            &[0; 8],
+            ("ProtocolSnapshotFailure", "BEEPER_CONFIG", "WrongLength"),
+        );
+
+        let (mut bridge, board) = bridge_at(IdentificationStage::BoardInfo);
+        let snapshot = feed_reply(
+            &mut bridge,
+            &board,
+            Direction::Reply,
+            CommandId::BoardInfo,
+            &valid_board_payload(),
+        );
+        assert_failure(
+            bridge,
+            snapshot,
+            Direction::Error,
+            CommandId::BeeperConfig,
+            &[],
+            ("ProtocolSnapshotFailure", "BEEPER_CONFIG", "ErrorReply"),
+        );
+
+        let (mut bridge, board) = bridge_at(IdentificationStage::BoardInfo);
+        let snapshot = feed_reply(
+            &mut bridge,
+            &board,
+            Direction::Reply,
+            CommandId::BoardInfo,
+            &valid_board_payload(),
+        );
+        assert_failure(
+            bridge,
+            snapshot,
+            Direction::Reply,
+            CommandId::ApiVersion,
+            &[0, 1, 46],
+            ("MalformedResponse", "BEEPER_CONFIG", "WrongCommand"),
+        );
     }
 
     #[test]

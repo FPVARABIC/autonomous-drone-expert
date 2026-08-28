@@ -22,7 +22,8 @@ export type IdentityFailureStage =
   | "API_VERSION"
   | "FC_VARIANT"
   | "FC_VERSION"
-  | "BOARD_INFO";
+  | "BOARD_INFO"
+  | "BEEPER_CONFIG";
 
 export type IdentityFailureReason =
   | "PayloadTooLong"
@@ -79,6 +80,11 @@ export interface ReadonlyDiscoveryResult {
   capabilityPackId?: string;
   capabilityTrust?: "review-only-embedded";
   capabilityWritePolicy?: "writes-blocked";
+  snapshotStatus?: "beeper-config-complete";
+  beeperOffFlags?: number;
+  dshotBeaconTone?: number;
+  dshotBeaconOffFlags?: number;
+  systemInitDisabled?: boolean;
   hardwareObserved: false;
 }
 

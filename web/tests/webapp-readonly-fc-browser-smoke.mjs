@@ -96,6 +96,7 @@ function installFakeSerial(scenario) {
     [36, 77, 62, 4, 2, 66, 84, 70, 76, 26],
     [36, 77, 62, 3, 3, 4, 5, 5, 4],
     [36, 77, 62, 88, 4, 83, 52, 48, 53, 0, 0, 0, 0, 15, 83, 80, 69, 69, 68, 89, 66, 69, 69, 70, 52, 48, 53, 86, 52, 17, 83, 112, 101, 101, 100, 121, 66, 101, 101, 32, 70, 52, 48, 53, 32, 86, 52, 3, 83, 80, 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 66],
+    [36, 77, 62, 9, 184, 0, 0, 1, 0, 3, 4, 3, 2, 1, 183],
   ].map((bytes) => Uint8Array.from(bytes));
   const testReply = (command, payload) => {
     let checksum = payload.length ^ command;
@@ -108,6 +109,10 @@ function installFakeSerial(scenario) {
     testReply(3, [25, 12, 1, 9, ...new TextEncoder().encode("2025.12.1")]),
     inScopeReplies[3],
   ];
+  const snapshotWrongLengthReplies = [
+    ...inScopeReplies.slice(0, 4),
+    testReply(184, [0, 0, 1, 0, 3, 4, 3, 2]),
+  ];
   const boardPayloadWithTrailingByte = [...inScopeReplies[3].slice(5, -1), 0];
   let boardChecksum = boardPayloadWithTrailingByte.length ^ 4;
   for (const byte of boardPayloadWithTrailingByte) boardChecksum ^= byte;
@@ -117,6 +122,8 @@ function installFakeSerial(scenario) {
   ]);
   const replies = scenario === "api147-read-only"
     ? api147Replies
+    : scenario === "snapshot-wrong-length"
+      ? snapshotWrongLengthReplies
     : scenario === "fragmented-api-version"
       ? [testReply(1, [0, 1, 48])]
     : scenario === "api-unsupported-major"
@@ -479,8 +486,11 @@ if (!browser) {
   process.exit(2);
 }
 
-const expectedRequests = [1, 2, 3, 4].map((command) => [36, 77, 60, 0, command, command]);
-const prohibitedCommands = new Set([68, 99, 184, 185, 250]);
+const expectedRequests = [1, 2, 3, 4, 184].map((command) => [
+  36, 77, 60, 0, command, command,
+]);
+const identityRequests = expectedRequests.slice(0, 4);
+const prohibitedCommands = new Set([68, 99, 185, 250]);
 const server = serveProduction();
 try {
   const port = await listen(server);
@@ -506,7 +516,7 @@ try {
 
   const mismatch = await runScenario(browser, url, "scope-mismatch", "scope-mismatch");
   if (
-    JSON.stringify(mismatch.writes) !== JSON.stringify(expectedRequests) ||
+    JSON.stringify(mismatch.writes) !== JSON.stringify(identityRequests) ||
     mismatch.fields.scopeMismatchField !== "fc_version" || mismatch.closeCount !== 1
   ) throw new Error(`PRODUCTION_SCOPE_MISMATCH_PROOF_FAILED:${JSON.stringify(mismatch)}`);
 
@@ -519,8 +529,8 @@ try {
   );
   if (
     JSON.stringify(api147.writes) !== JSON.stringify([
-      ...expectedRequests,
-      ...expectedRequests,
+      ...identityRequests,
+      ...identityRequests,
     ]) ||
     api147.fields.apiVersion !== "1.47" ||
     api147.fields.fcVariant !== "BTFL" ||
@@ -572,7 +582,7 @@ try {
     "failed",
   );
   if (
-    JSON.stringify(typedFailure.writes) !== JSON.stringify(expectedRequests) ||
+    JSON.stringify(typedFailure.writes) !== JSON.stringify(identityRequests) ||
     typedFailure.fields.failure !== "ProtocolIdentityFailure" ||
     typedFailure.fields.failureStage !== "BOARD_INFO" ||
     typedFailure.fields.failureReason !== "TrailingPayload" ||
@@ -583,6 +593,24 @@ try {
     !typedFailure.diagnostic.traceEvents.some((event) => event.includes("IDENTITY_STAGE_FAILED")) ||
     !typedFailure.diagnostic.traceEvents.some((event) => event.includes("TrailingPayload"))
   ) throw new Error(`PRODUCTION_TYPED_TRACE_PROOF_FAILED:${JSON.stringify(typedFailure)}`);
+
+  const snapshotFailure = await runScenario(
+    browser,
+    url,
+    "snapshot-wrong-length",
+    "failed",
+  );
+  if (
+    JSON.stringify(snapshotFailure.writes) !== JSON.stringify(expectedRequests) ||
+    snapshotFailure.fields.failure !== "ProtocolSnapshotFailure" ||
+    snapshotFailure.fields.failureStage !== "BEEPER_CONFIG" ||
+    snapshotFailure.fields.failureReason !== "WrongLength" ||
+    snapshotFailure.fields.failureOrigin !== "SNAPSHOT_STAGE" ||
+    snapshotFailure.closeCount !== 1
+  ) throw new Error(`PRODUCTION_SNAPSHOT_DIAGNOSTIC_PROOF_FAILED:${JSON.stringify(snapshotFailure)}`);
+  if (
+    !snapshotFailure.diagnostic.traceEvents.some((event) => event.includes("SNAPSHOT_STAGE_FAILED"))
+  ) throw new Error(`PRODUCTION_SNAPSHOT_TRACE_PROOF_FAILED:${JSON.stringify(snapshotFailure)}`);
 
   const cancelled = await runScenario(browser, url, "cancelled", "cancelled");
   if (cancelled.requestCount !== 1 || cancelled.writes.length !== 0 || cancelled.openCount !== 0) {
@@ -601,6 +629,7 @@ try {
     fragmented,
     malformedApi,
     typedFailure,
+    snapshotFailure,
     cancelled,
     unavailable,
   ]) {

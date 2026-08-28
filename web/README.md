@@ -29,10 +29,12 @@ outside `web/` are rejected by `scripts/check_web_dependencies.py`.
   authority.
 - IndexedDB remains the only browser persistence authority. The storage-only WASM host driver
   executes Rust-emitted load/CAS directives but cannot create journal bytes or accept state.
-- Web Serial, hardware, firmware and general-purpose WASM bindings remain deferred.
-- Android/APK source, wrappers and dependencies remain deferred and prohibited.
-- The visible USB chooser is intentionally non-functional in this gate: it reports the
-  deferred capability and never contacts a device or claims selection success.
+- Web Serial is limited to the Rust-owned read-only identity sequence and, for one exact reviewed
+  API 1.46 identity, one typed beeper snapshot read. It exposes no generic command or write path.
+- Android is a development-validation wrapper only; it has no native flight-controller USB
+  authority.
+- The visible USB chooser requires an explicit user gesture and retains the selected port only in
+  memory. It never enumerates grants, reads USB metadata or claims hardware validation.
 
 The approved Site v3 is a design/provenance reference, not a package template. Its hosting,
 database, server-component and platform scaffolding remain prohibited.

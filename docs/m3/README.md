@@ -1,6 +1,6 @@
 # M3 — Read-only capability-pack resolution
 
-**Status:** slices 1–8 implemented; all hardware evidence remains unchanged
+**Status:** slices 1–9 implemented; all hardware evidence remains unchanged
 
 M3 begins the firmware capability-pack layer accepted by ADR-0007. This milestone does not add a
 hardware write, a driver, a transport, an arbitrary command table or a signed-pack distribution
@@ -141,6 +141,35 @@ The completed browser result may now carry the stable pack id and its review-onl
 metadata in memory. The ordinary React UI still neither renders nor persists this internal
 selection evidence.
 
+## Slice 9 — exact API 1.46 beeper snapshot read
+
+After the complete legacy identity matches the exact API 1.46 review-only descriptor and the M1
+proposed scope, the Rust Web Serial state machine now enters the explicit
+`SessionState::SnapshotRead` state and emits one additional empty-payload
+`MSP_BEEPER_CONFIG` request. The separate `ReadonlyBeeperSnapshotRead` type owns construction,
+correlation and strict decoding of the pinned nine-byte layout:
+
+- `beeper_off_flags` as `u32`;
+- `dshot_beacon_tone` as `u8`;
+- `dshot_beacon_off_flags` as `u32`.
+
+The read is eligible only for the exact `bf-4.5.5-api1.46-speedybeef405v4-review` descriptor with
+`ReviewOnlyEmbedded`, `WritesBlocked` and `NeverAuthorizesWrites`. A scope mismatch, missing or
+ambiguous capability decision, unsupported API, or API 1.47 completion never emits the snapshot
+request. API 1.47 remains at four identity reads because this slice does not infer an unpinned
+snapshot layout for that release.
+
+The bridge exposes only the typed numeric fields, a `beeper-config-complete` marker and the derived
+`systemInitDisabled` boolean in the bounded in-memory result. React does not render or persist these
+internal snapshot fields. The diagnostic trace adds fixed `BEEPER_CONFIG` / `SNAPSHOT_STAGE` tokens
+but never records the snapshot values or raw reply bytes. Wrong command, direction, error reply,
+length, checksum, trailing data, transport failure or cleanup failure remains terminal and fail
+closed.
+
+This slice adds no SET/SAVE/reboot/restore command, no approval, no generic command constructor and
+no hardware-support claim. The production in-scope software path is now exactly four identity reads
+plus one reviewed snapshot read; every other path retains its earlier bounded prefix.
+
 ## Safety properties
 
 The current M3 slices cannot represent or perform:
@@ -166,11 +195,14 @@ repository-reviewed descriptive data only and cannot authorize a write.
 
 ## Next M3 work
 
-1. Define any additional read profile only after separately pinned protocol provenance and exact
-   target/version review; unknown versions remain fail closed.
-2. Keep all real writes blocked until a later write milestone, compatible backup/recovery evidence,
+1. Define the privacy-bounded transcript/capture contract needed for Replay of the exact read-only
+   identity and snapshot sequence; no physical capture is claimed until owner-controlled evidence
+   exists.
+2. Define any additional read or snapshot profile only after separately pinned protocol provenance
+   and exact target/version review; unknown versions remain fail closed.
+3. Keep all real writes blocked until a later write milestone, compatible backup/recovery evidence,
    and separate owner approval.
-3. Treat signed/checksummed/revocable pack distribution as a later governance slice; embedded
+4. Treat signed/checksummed/revocable pack distribution as a later governance slice; embedded
    review-only descriptors are not distributable trust claims.
-4. No new physical operation is required for this software slice; physical evidence remains
+5. No new physical operation is required for this software slice; physical evidence remains
    unchanged until a separately approved hardware observation.

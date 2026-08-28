@@ -1,6 +1,6 @@
 [package]
 name = "ade-web-readonly-serial-wasm-bridge"
-description = "Read-only Web Serial WASM facade for Rust-authorised MSP identification."
+description = "Read-only Web Serial WASM facade for Rust-authorised MSP identity and snapshot reads."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -19,7 +19,7 @@ export class WasmReadonlySerialDirective {
         wasm.__wbg_wasmreadonlyserialdirective_free(ptr, 0);
     }
     /**
-     * Bytes exist only on an `exchange-identification-read` directive and were already
+     * Bytes exist only on a fixed identification or snapshot read directive and were already
      * authorised and framed by Rust.
      * @returns {Uint8Array}
      */
@@ -173,6 +173,14 @@ export class WasmReadonlySerialDiscovery {
         return v1;
     }
     /**
+     * Typed beeper disable flags from the reviewed snapshot layout.
+     * @returns {number | undefined}
+     */
+    get beeperOffFlags() {
+        const ret = wasm.wasmreadonlyserialdiscovery_beeperOffFlags(this.__wbg_ptr);
+        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+    }
+    /**
      * @returns {WasmReadonlySerialDirective}
      */
     begin() {
@@ -235,6 +243,22 @@ export class WasmReadonlySerialDiscovery {
         return v1;
     }
     /**
+     * Typed DShot beacon disable flags from the reviewed snapshot layout.
+     * @returns {number | undefined}
+     */
+    get dshotBeaconOffFlags() {
+        const ret = wasm.wasmreadonlyserialdiscovery_dshotBeaconOffFlags(this.__wbg_ptr);
+        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+    }
+    /**
+     * Typed DShot beacon tone from the reviewed snapshot layout.
+     * @returns {number | undefined}
+     */
+    get dshotBeaconTone() {
+        const ret = wasm.wasmreadonlyserialdiscovery_dshotBeaconTone(this.__wbg_ptr);
+        return ret === 0xFFFFFF ? undefined : ret;
+    }
+    /**
      * @returns {string | undefined}
      */
     get failureClass() {
@@ -264,7 +288,7 @@ export class WasmReadonlySerialDiscovery {
     /**
      * The fixed identity stage at which a protocol failure occurred.
      *
-     * This getter exposes only one of four stable labels and never command bytes or payload.
+     * This getter exposes only a fixed read-stage label and never command bytes or payload.
      * @returns {string | undefined}
      */
     get failureStage() {
@@ -368,6 +392,27 @@ export class WasmReadonlySerialDiscovery {
             wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         }
         return v1;
+    }
+    /**
+     * Stable marker proving the exact typed nine-byte snapshot completed in Rust.
+     * @returns {string | undefined}
+     */
+    get snapshotStatus() {
+        const ret = wasm.wasmreadonlyserialdiscovery_snapshotStatus(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Derived state of the one bit targeted by the simulation-only M1 slice.
+     * @returns {boolean | undefined}
+     */
+    get systemInitDisabled() {
+        const ret = wasm.wasmreadonlyserialdiscovery_systemInitDisabled(this.__wbg_ptr);
+        return ret === 0xFFFFFF ? undefined : ret !== 0;
     }
     /**
      * Remove the oldest privacy-bounded protocol event, if one is waiting.

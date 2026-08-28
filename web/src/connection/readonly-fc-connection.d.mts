@@ -12,6 +12,7 @@ export type ReadonlyFcFailure =
   | "Timeout"
   | "MalformedResponse"
   | "ProtocolIdentityFailure"
+  | "ProtocolSnapshotFailure"
   | "CloseFailure"
   | "HardwareEvidenceBoundary"
   | "Unknown";
@@ -26,7 +27,8 @@ export type IdentityFailureStage =
   | "API_VERSION"
   | "FC_VARIANT"
   | "FC_VERSION"
-  | "BOARD_INFO";
+  | "BOARD_INFO"
+  | "BEEPER_CONFIG";
 
 export type IdentityFailureReason =
   | "PayloadTooLong"
@@ -83,6 +85,11 @@ export interface PrivacyBoundedIdentityResult {
   capabilityPackId?: string;
   capabilityTrust?: "review-only-embedded";
   capabilityWritePolicy?: "writes-blocked";
+  snapshotStatus?: "beeper-config-complete";
+  beeperOffFlags?: number;
+  dshotBeaconTone?: number;
+  dshotBeaconOffFlags?: number;
+  systemInitDisabled?: boolean;
 }
 
 export interface ReadonlyFcConnection {
