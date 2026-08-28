@@ -17,10 +17,12 @@ export const DIAGNOSTIC_PHASES = Object.freeze([
   "FC_VARIANT",
   "FC_VERSION",
   "BOARD_INFO",
+  "BEEPER_CONFIG",
   "SERIAL_WRITE",
   "SERIAL_READ",
   "MSP_FRAME",
   "IDENTITY_STAGE",
+  "SNAPSHOT_STAGE",
   "PORT_CLOSE",
   "CLEANUP",
   "UI_BOUNDARY",
@@ -45,6 +47,8 @@ export const DIAGNOSTIC_EVENTS = Object.freeze([
   "FRAME_REJECTED",
   "IDENTITY_STAGE_OK",
   "IDENTITY_STAGE_FAILED",
+  "SNAPSHOT_STAGE_OK",
+  "SNAPSHOT_STAGE_FAILED",
   "PORT_CLOSE_START",
   "PORT_CLOSE_OK",
   "PORT_CLOSE_FAILED",
@@ -61,6 +65,7 @@ export const DIAGNOSTIC_STAGES = Object.freeze([
   "FC_VARIANT",
   "FC_VERSION",
   "BOARD_INFO",
+  "BEEPER_CONFIG",
 ]);
 
 export const DIAGNOSTIC_COMMANDS = Object.freeze([
@@ -68,6 +73,7 @@ export const DIAGNOSTIC_COMMANDS = Object.freeze([
   "MSP_FC_VARIANT",
   "MSP_FC_VERSION",
   "MSP_BOARD_INFO",
+  "MSP_BEEPER_CONFIG",
 ]);
 
 export const DIAGNOSTIC_DIRECTIONS = Object.freeze([
@@ -85,6 +91,7 @@ export const DIAGNOSTIC_FAILURE_CLASSES = Object.freeze([
   "Timeout",
   "MalformedResponse",
   "ProtocolIdentityFailure",
+  "ProtocolSnapshotFailure",
   "HardwareEvidenceBoundary",
   "CloseFailure",
   "Unknown",
@@ -120,6 +127,7 @@ export const DIAGNOSTIC_ORIGINS = Object.freeze([
   "SERIAL_TIMEOUT",
   "MSP_FRAME",
   "IDENTITY_STAGE",
+  "SNAPSHOT_STAGE",
   "DIRECTIVE_REFUSAL",
   "PORT_CLOSE",
   "READER_CANCEL",

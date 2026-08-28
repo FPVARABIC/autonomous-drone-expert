@@ -50,7 +50,7 @@ function optionalFields(fields) {
 }
 
 /**
- * Narrow host for Rust-issued read-only discovery directives.
+ * Narrow host for Rust-issued read-only identity and reviewed snapshot directives.
  *
  * The selected port and diagnostic trace are memory-only. This class never enumerates grants,
  * reads USB metadata, logs frames, constructs MSP, or accepts a caller-selected command.
@@ -493,6 +493,7 @@ export class WebSerialReadonlyHost {
               }
               break;
             case "exchange-identification-read":
+            case "exchange-snapshot-read":
               directive = await this.#exchange(discovery, current);
               break;
             case "close": {
@@ -538,6 +539,11 @@ export class WebSerialReadonlyHost {
         capabilityPackId: discovery.capabilityPackId ?? undefined,
         capabilityTrust: discovery.capabilityTrust ?? undefined,
         capabilityWritePolicy: discovery.capabilityWritePolicy ?? undefined,
+        snapshotStatus: discovery.snapshotStatus ?? undefined,
+        beeperOffFlags: discovery.beeperOffFlags ?? undefined,
+        dshotBeaconTone: discovery.dshotBeaconTone ?? undefined,
+        dshotBeaconOffFlags: discovery.dshotBeaconOffFlags ?? undefined,
+        systemInitDisabled: discovery.systemInitDisabled ?? undefined,
         hardwareObserved: discovery.hardwareObserved,
       };
       if (result.outcome === "failed") {

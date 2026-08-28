@@ -10,6 +10,7 @@ const IN_SCOPE_REPLIES = [
   [36, 77, 62, 4, 2, 66, 84, 70, 76, 26],
   [36, 77, 62, 3, 3, 4, 5, 5, 4],
   [36, 77, 62, 88, 4, 83, 52, 48, 53, 0, 0, 0, 0, 15, 83, 80, 69, 69, 68, 89, 66, 69, 69, 70, 52, 48, 53, 86, 52, 17, 83, 112, 101, 101, 100, 121, 66, 101, 101, 32, 70, 52, 48, 53, 32, 86, 52, 3, 83, 80, 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 66],
+  [36, 77, 62, 9, 184, 0, 0, 1, 0, 3, 4, 3, 2, 1, 183],
 ].map((bytes) => Uint8Array.from(bytes));
 const API_SCOPE_REPLIES = [
   ["lower-minor", [36, 77, 62, 3, 1, 0, 1, 45, 46], "1.45", "normal"],
@@ -22,6 +23,10 @@ function testReply(command, payload) {
   for (const byte of payload) checksum ^= byte;
   return Uint8Array.from([36, 77, 62, payload.length, command, ...payload, checksum]);
 }
+const SNAPSHOT_WRONG_LENGTH_REPLIES = [
+  ...IN_SCOPE_REPLIES.slice(0, 4),
+  testReply(184, [0, 0, 1, 0, 3, 4, 3, 2]),
+];
 const API147_READONLY_REPLIES = [
   testReply(1, [0, 1, 47]),
   testReply(2, [...new TextEncoder().encode("BTFL")]),
@@ -33,10 +38,10 @@ const FULL_SCOPE_MISMATCH_REPLIES = [
   Uint8Array.from([36, 77, 62, 3, 3, 4, 5, 6, 7]),
   IN_SCOPE_REPLIES[3],
 ];
-const EXPECTED_REQUESTS = [1, 2, 3, 4].map((command) =>
+const EXPECTED_REQUESTS = [1, 2, 3, 4, 184].map((command) =>
   Uint8Array.from([36, 77, 60, 0, command, command]),
 );
-const PROHIBITED_TEST_REQUESTS = [68, 184, 185, 250, 99].map((command) =>
+const PROHIBITED_TEST_REQUESTS = [68, 185, 250, 99].map((command) =>
   Uint8Array.from([36, 77, 60, 0, command, command]),
 );
 
@@ -324,9 +329,14 @@ async function scenarioCSuccessAndGCleanup() {
   );
   assert(run.result.capabilityTrust === "review-only-embedded", "review-only trust evidence");
   assert(run.result.capabilityWritePolicy === "writes-blocked", "capability writes remain blocked");
+  assert(run.result.snapshotStatus === "beeper-config-complete", "typed snapshot completed");
+  assert(run.result.beeperOffFlags === 65_536, "typed beeper flags retained");
+  assert(run.result.dshotBeaconTone === 3, "typed DShot tone retained");
+  assert(run.result.dshotBeaconOffFlags === 16_909_060, "typed DShot flags retained");
+  assert(run.result.systemInitDisabled === true, "derived SYSTEM_INIT state retained");
   assert(run.result.hardwareObserved === false, "software evidence only");
   assert(run.port.openOptions?.baudRate === 115200, "internal baud rate");
-  assert(run.port.writes.length === 4, "exactly four writes");
+  assert(run.port.writes.length === 5, "exactly five bounded read requests");
   EXPECTED_REQUESTS.forEach((expected, index) =>
     assert(equalBytes(run.port.writes[index], expected), `request order ${index}`),
   );
@@ -341,11 +351,11 @@ async function scenarioCSuccessAndGCleanup() {
   );
   assert(
     trace.filter((event) => event.event === "DIRECTIVE").map((event) => event.command).join(",") ===
-      "MSP_API_VERSION,MSP_FC_VARIANT,MSP_FC_VERSION,MSP_BOARD_INFO",
-    "Rust emitted the exact four ordered commands",
+      "MSP_API_VERSION,MSP_FC_VARIANT,MSP_FC_VERSION,MSP_BOARD_INFO,MSP_BEEPER_CONFIG",
+    "Rust emitted the exact identity and snapshot reads",
   );
   const acceptedFrames = trace.filter((event) => event.event === "FRAME_ACCEPTED");
-  assert(acceptedFrames.length === 4, "Rust accepted exactly four MSP frames");
+  assert(acceptedFrames.length === 5, "Rust accepted exactly five MSP frames");
   assert(
     acceptedFrames.every((event) => event.direction === "REPLY"),
     "Rust authoritatively reports normal reply direction",
@@ -353,6 +363,10 @@ async function scenarioCSuccessAndGCleanup() {
   assert(
     trace.filter((event) => event.event === "IDENTITY_STAGE_OK").length === 4,
     "Rust accepted exactly four typed identity stages",
+  );
+  assert(
+    trace.filter((event) => event.event === "SNAPSHOT_STAGE_OK").length === 1,
+    "Rust accepted exactly one typed snapshot stage",
   );
 }
 
@@ -490,6 +504,24 @@ async function scenarioFFailClosed() {
       assert(identityFailure?.origin === "IDENTITY_STAGE", "Rust owns the error-reply origin");
     }
   }
+
+  const snapshotFailure = await runDiscovery(SNAPSHOT_WRONG_LENGTH_REPLIES, "whole-frame", 15);
+  assert(snapshotFailure.result.outcome === "failed", "snapshot wrong length fails closed");
+  assert(
+    snapshotFailure.result.failure === "ProtocolSnapshotFailure",
+    "snapshot has a distinct failure class",
+  );
+  assert(snapshotFailure.result.failureStage === "BEEPER_CONFIG", "snapshot stage retained");
+  assert(snapshotFailure.result.failureReason === "WrongLength", "snapshot reason retained");
+  assert(
+    snapshotFailure.result.failureOrigin === "SNAPSHOT_STAGE",
+    "Rust owns the snapshot failure origin",
+  );
+  const trace = assertPrivacyBoundedTrace(snapshotFailure.host);
+  assert(
+    trace.some((event) => event.event === "SNAPSHOT_STAGE_FAILED"),
+    "snapshot failure is present in the bounded trace",
+  );
 }
 
 async function scenarioHScopeMismatch() {
@@ -577,9 +609,10 @@ async function scenarioH2Api147ReadOnly() {
     "API 1.47 capability remains write blocked",
   );
   assert(run.result.scopeMismatchField === undefined, "read-only completion is not API unsupported");
+  assert(run.result.snapshotStatus === undefined, "API 1.47 does not infer a snapshot layout");
   assert(run.result.hardwareObserved === false, "read-only completion is not hardware validation");
   assert(run.port.writes.length === 4, "API 1.47 uses exactly four empty reads");
-  EXPECTED_REQUESTS.forEach((expected, index) =>
+  EXPECTED_REQUESTS.slice(0, 4).forEach((expected, index) =>
     assert(equalBytes(run.port.writes[index], expected), `API 1.47 request order ${index}`),
   );
 }
@@ -629,7 +662,7 @@ async function scenarioIHostFailureOriginsAndRetry() {
     assert(trace.at(-1).event === "FINAL_OK", `retry ${attempt} terminal success`);
   }
   assert(port.openCount === 2 && port.closeCount === 2, "repeated attempts reopen and reclose");
-  assert(port.writes.length === 8, "repeated attempts retain exactly four reads each");
+  assert(port.writes.length === 10, "repeated attempts retain exactly five reads each");
 }
 
 async function scenarioJStreamAndStageMatrix() {
@@ -637,7 +670,7 @@ async function scenarioJStreamAndStageMatrix() {
   for (const mode of ["whole-frame", "split-frame", "exact-chunk-boundary"]) {
     const run = await runDiscovery(IN_SCOPE_REPLIES, mode, 15);
     assert(run.result.outcome === "in-scope", `${mode} has the same typed result`);
-    assert(run.port.writes.length === 4, `${mode} keeps four commands`);
+    assert(run.port.writes.length === 5, `${mode} keeps five commands`);
     const trace = assertPrivacyBoundedTrace(run.host);
     assert(
       trace.filter((event) => event.event === "RX_CHUNK").every((event) => !("direction" in event)),
@@ -664,7 +697,7 @@ async function scenarioJStreamAndStageMatrix() {
   assert(bounded.result.failureOrigin === "SERIAL_TIMEOUT", "chunk-count bound origin");
   assertPrivacyBoundedTrace(bounded.host);
 
-  const stages = ["API_VERSION", "FC_VARIANT", "FC_VERSION", "BOARD_INFO"];
+  const stages = ["API_VERSION", "FC_VARIANT", "FC_VERSION", "BOARD_INFO", "BEEPER_CONFIG"];
   for (let stageIndex = 1; stageIndex <= stages.length; stageIndex += 1) {
     for (const [kind, failure, origin] of [
       ["timeout", "Timeout", "SERIAL_TIMEOUT"],

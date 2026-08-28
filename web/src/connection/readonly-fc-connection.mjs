@@ -28,6 +28,11 @@ function privacyBoundedResult(result, host) {
     capabilityPackId: result.capabilityPackId,
     capabilityTrust: result.capabilityTrust,
     capabilityWritePolicy: result.capabilityWritePolicy,
+    snapshotStatus: result.snapshotStatus,
+    beeperOffFlags: result.beeperOffFlags,
+    dshotBeaconTone: result.dshotBeaconTone,
+    dshotBeaconOffFlags: result.dshotBeaconOffFlags,
+    systemInitDisabled: result.systemInitDisabled,
   };
 }
 

@@ -1,5 +1,8 @@
 # M2 Web Serial read-only discovery
 
+> Historical M2 acceptance boundary. M3 Slice 9 later adds one exact, descriptor-gated API 1.46
+> beeper snapshot read; see `docs/m3/README.md`. The four identity reads below remain unchanged.
+
 This gate connected the real Rust WASM identification state machine to a narrow production Web
 Serial host. The later production UI integration is documented in
 `WEBAPP-READONLY-FC-CONNECTION.md`. Both remain discovery only and do not enter configuration,
@@ -37,7 +40,8 @@ table, parser, or fixture.
 
 - Production React wiring is limited to the later prepared read-only connection facade.
 - No automatic port enumeration/reconnection and no persisted port metadata.
-- No BeeperConfig snapshot and no write/save/reboot/restore operation.
+- At M2 acceptance there was no BeeperConfig snapshot. M3 Slice 9 later adds one exact read-only
+  snapshot; write/save/reboot/restore operations remain absent.
 - A scope match is `PROPOSED — NOT HARDWARE VALIDATED`.
 - Physical FC behavior, board support, driver behavior, and real disconnect/reconnect remain an
   owner-controlled manual test milestone.

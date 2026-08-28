@@ -9,8 +9,8 @@ internal implementation details rather than the product identity.
 ## Status
 
 **M1 accepted on simulation; G1 merged; M2 production read-only Web/PWA connection merged;
-M3 read-only profiles and exact review-only API 1.46/API 1.47 capability descriptors implemented.
-This is not a production release and hardware support is not validated.**
+M3 read-only profiles, exact API 1.46/API 1.47 descriptors and the first exact API 1.46 snapshot
+read implemented. This is not a production release and hardware support is not validated.**
 
 M0 foundations are complete. M1 implements one deliberately narrow vertical slice for the
 Betaflight 4.5.5 `SYSTEM_INIT` beeper bit over project-owned Mock and Replay transports:
@@ -24,10 +24,10 @@ and stopped on an unsupported observed API outcome; it did **not** complete iden
 not establish hardware support. The Android artifact is a development-validation thin wrapper
 with no native flight-controller USB authority.
 
-M3 starts the ADR-0007 capability-pack layer as descriptive review-only data. Its first slice
-validates exact firmware/API/version/target descriptors and resolves them fail-closed for
-read-only knowledge. It has no write-enabled capability-pack state and adds no hardware
-authority. See `docs/m3/README.md`.
+M3 adds descriptive review-only capability data and a Rust-owned, exact API 1.46 beeper snapshot
+read after a complete descriptor match. The snapshot is typed, memory-only and unavailable to
+API 1.47 or any unmatched identity. M3 has no write-enabled capability-pack state and adds no
+hardware authority. See `docs/m3/README.md`.
 
 There is still no production hardware write transport, firmware flashing, motor control,
 Android native FC USB support or hardware-support claim. Real writes remain separately gated by

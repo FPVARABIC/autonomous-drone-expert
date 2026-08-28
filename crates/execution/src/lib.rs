@@ -154,6 +154,17 @@ pub enum ExecError {
     NoIdentificationRequestPending,
     /// The identification sequence has reached a terminal supported or unsupported result.
     IdentificationAlreadyComplete,
+    /// A read-only snapshot can start only in the explicit snapshot lifecycle state.
+    SnapshotNotPermittedInState {
+        /// The state in which the snapshot request was refused.
+        state: SessionState,
+    },
+    /// A snapshot request is already awaiting its response.
+    SnapshotRequestPending,
+    /// A snapshot response arrived without a request in flight.
+    NoSnapshotRequestPending,
+    /// The single bounded snapshot read already completed.
+    SnapshotAlreadyComplete,
     /// A structurally valid API reply has no reviewed read-only profile.
     ApiScopeMismatch {
         /// Stable field label; never a raw payload or device value.
@@ -184,6 +195,16 @@ impl From<MspError> for ExecError {
 /// cannot select or replace the command through this type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentificationRequest {
+    command: CommandId,
+    bytes: Vec<u8>,
+}
+
+/// One Rust-authorised request for the exact M3 beeper snapshot.
+///
+/// The command and empty-payload frame are fixed inside Rust. The browser may transmit the
+/// returned bytes but cannot select a different command or attach a payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadonlySnapshotRequest {
     command: CommandId,
     bytes: Vec<u8>,
 }
@@ -293,6 +314,20 @@ impl IdentificationRequest {
     }
 
     /// The already-framed MSPv1 request bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl ReadonlySnapshotRequest {
+    /// The only command represented by this request.
+    #[must_use]
+    pub const fn command(&self) -> CommandId {
+        self.command
+    }
+
+    /// The already-framed empty-payload request bytes.
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
@@ -549,6 +584,103 @@ impl ReadonlyIdentification {
     #[must_use]
     pub const fn is_complete(&self) -> bool {
         matches!(self.stage, IdentificationStage::Complete)
+    }
+}
+
+/// Incremental, single-command reader for the pinned nine-byte beeper snapshot.
+///
+/// This type owns request construction, response correlation and typed decoding. It accepts no
+/// write approval and can be created only in [`SessionState::SnapshotRead`]. Firmware/target
+/// eligibility is intentionally decided by the capability boundary before this reader exists.
+#[derive(Debug)]
+pub struct ReadonlyBeeperSnapshotRead {
+    request_pending: bool,
+    complete: bool,
+    correlator: Correlator,
+}
+
+impl ReadonlyBeeperSnapshotRead {
+    /// Create the one-read snapshot state machine in the explicit snapshot lifecycle state.
+    ///
+    /// # Errors
+    /// Refuses every state other than [`SessionState::SnapshotRead`].
+    pub fn new(state: SessionState) -> Result<Self, ExecError> {
+        if state != SessionState::SnapshotRead {
+            return Err(ExecError::SnapshotNotPermittedInState { state });
+        }
+        Ok(Self {
+            request_pending: false,
+            complete: false,
+            correlator: Correlator::new(),
+        })
+    }
+
+    /// Emit the exact empty-payload `MSP_BEEPER_CONFIG` request once.
+    ///
+    /// # Errors
+    /// Refuses a duplicate in-flight request or reuse after completion.
+    pub fn next_request(&mut self) -> Result<ReadonlySnapshotRequest, ExecError> {
+        if self.complete {
+            return Err(ExecError::SnapshotAlreadyComplete);
+        }
+        if self.request_pending {
+            return Err(ExecError::SnapshotRequestPending);
+        }
+        let command = CommandId::BeeperConfig;
+        let bytes = encode_frame(Direction::Request, command, &[])?;
+        self.correlator.on_request(command);
+        self.request_pending = true;
+        Ok(ReadonlySnapshotRequest { command, bytes })
+    }
+
+    /// Accept the one correlated reply and decode the complete nine-byte snapshot.
+    ///
+    /// # Errors
+    /// Refuses unsolicited, wrong-command, request-direction, error, malformed and duplicate
+    /// responses. No raw payload is retained after the typed snapshot is returned.
+    pub fn accept_response(&mut self, frame: &Frame) -> Result<BeeperConfigSnapshot, ExecError> {
+        if self.complete {
+            return Err(ExecError::SnapshotAlreadyComplete);
+        }
+        if !self.request_pending {
+            return Err(ExecError::NoSnapshotRequestPending);
+        }
+        if matches!(frame.direction, Direction::Request) {
+            return Err(ExecError::ReplyDirectionInvalid);
+        }
+        let expected = CommandId::BeeperConfig;
+        let reply_command = frame
+            .known_command()
+            .ok_or(ExecError::ReplyCommandMismatch {
+                expected: expected.as_u8(),
+                got: frame.command,
+            })?;
+        match self.correlator.on_reply(reply_command) {
+            ReplyClass::Expected => {}
+            other => return Err(ExecError::ReplyMisclassified(other)),
+        }
+        if frame.command != expected.as_u8() {
+            return Err(ExecError::ReplyCommandMismatch {
+                expected: expected.as_u8(),
+                got: frame.command,
+            });
+        }
+        if matches!(frame.direction, Direction::Error) {
+            return Err(ExecError::ErrorReply {
+                command: frame.command,
+            });
+        }
+
+        let snapshot = BeeperConfigSnapshot::from_reply(frame)?;
+        self.request_pending = false;
+        self.complete = true;
+        Ok(snapshot)
+    }
+
+    /// Whether the one bounded snapshot read completed successfully.
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        self.complete
     }
 }
 
@@ -838,6 +970,94 @@ mod tests {
         assert_eq!(
             Executor::new_simulation(ExecutionTarget::Hardware).unwrap_err(),
             ExecError::HardwareRefused(HARDWARE_WRITE_GATE_NOT_APPROVED),
+        );
+    }
+
+    #[test]
+    fn readonly_snapshot_reader_emits_one_exact_empty_read_and_decodes_all_fields() {
+        let mut reader = ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
+        let request = reader.next_request().unwrap();
+        assert_eq!(request.command(), CommandId::BeeperConfig);
+        let frame = decode_frame(request.bytes()).unwrap();
+        assert_eq!(frame.direction, Direction::Request);
+        assert_eq!(frame.known_command(), Some(CommandId::BeeperConfig));
+        assert_eq!(frame.payload_len(), 0);
+        assert_eq!(reader.next_request(), Err(ExecError::SnapshotRequestPending));
+
+        let expected = BeeperConfigSnapshot {
+            beeper_off_flags: 0x0102_0304,
+            dshot_beacon_tone: 5,
+            dshot_beacon_off_flags: 0x0607_0809,
+        };
+        let reply = encode_frame(
+            Direction::Reply,
+            CommandId::BeeperConfig,
+            &expected.to_reply_payload(),
+        )
+        .unwrap();
+        let observed = reader.accept_response(&decode_frame(&reply).unwrap()).unwrap();
+        assert_eq!(observed, expected);
+        assert!(reader.is_complete());
+        assert_eq!(reader.next_request(), Err(ExecError::SnapshotAlreadyComplete));
+        assert_eq!(
+            reader.accept_response(&decode_frame(&reply).unwrap()),
+            Err(ExecError::SnapshotAlreadyComplete),
+        );
+    }
+
+    #[test]
+    fn readonly_snapshot_reader_refuses_wrong_state_unsolicited_error_and_wrong_length() {
+        for state in [
+            SessionState::Disconnected,
+            SessionState::Identifying,
+            SessionState::Planning,
+            SessionState::Verifying,
+            SessionState::Recovering,
+        ] {
+            assert!(matches!(
+                ReadonlyBeeperSnapshotRead::new(state),
+                Err(ExecError::SnapshotNotPermittedInState { state: refused }) if refused == state
+            ));
+        }
+
+        let valid_payload = snapshot().to_reply_payload();
+        let valid_reply = decode_frame(
+            &encode_frame(Direction::Reply, CommandId::BeeperConfig, &valid_payload).unwrap(),
+        )
+        .unwrap();
+        let mut unsolicited =
+            ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
+        assert_eq!(
+            unsolicited.accept_response(&valid_reply),
+            Err(ExecError::NoSnapshotRequestPending),
+        );
+
+        let mut error_reader =
+            ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
+        error_reader.next_request().unwrap();
+        let error_reply =
+            decode_frame(&encode_frame(Direction::Error, CommandId::BeeperConfig, &[]).unwrap())
+                .unwrap();
+        assert_eq!(
+            error_reader.accept_response(&error_reply),
+            Err(ExecError::ErrorReply {
+                command: CommandId::BeeperConfig.as_u8(),
+            }),
+        );
+
+        let mut short_reader =
+            ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
+        short_reader.next_request().unwrap();
+        let short_reply = decode_frame(
+            &encode_frame(Direction::Reply, CommandId::BeeperConfig, &[0; 8]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            short_reader.accept_response(&short_reply),
+            Err(ExecError::Payload(MspError::WrongLength {
+                expected: 9,
+                got: 8,
+            })),
         );
     }
 

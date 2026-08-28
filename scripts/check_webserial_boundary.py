@@ -86,6 +86,7 @@ def source_authority_errors(files: dict[PurePosixPath, str]) -> list[str]:
         "selectPortFromUserGesture",
         "open({ baudRate: INITIAL_MSP_BAUD_RATE })",
         "exchange-identification-read",
+        "exchange-snapshot-read",
         "acceptReadChunk",
         "acceptExchangeFailure",
         "failureStage: discovery.failureStage ?? undefined",
@@ -264,11 +265,11 @@ def repository_errors(root: Path = ROOT) -> list[str]:
     adapter_path = root / ADAPTER
     declaration_path = root / DECLARATION
     if adapter_path.is_file() and hashlib.sha256(adapter_path.read_bytes()).hexdigest() != (
-        "3a94eb8e51bfc5266fd8224d26a5ec037fcae255d8d155ddf2d1472ee99ad31a"
+        "54b73f51a4f5c30e632e9cf8c76a7d1828d240c6af56a784372b079db0719903"
     ):
         errors.append("accepted production Web Serial host source drifted")
     if declaration_path.is_file() and hashlib.sha256(declaration_path.read_bytes()).hexdigest() != (
-        "e3ca1f8787519c71b54bb79dc00e4d21b78af85e0a202b7acb5547d3a61294bf"
+        "6006c87ab766a56b34d99a262373a4c799583f7e70332139ff96e2cb5387cabc"
     ):
         errors.append("accepted production Web Serial host declaration drifted")
     errors.extend(verify_webserial_product_assets.verify(root=root))
@@ -282,6 +283,9 @@ def repository_errors(root: Path = ROOT) -> list[str]:
         for marker in (
             "WasmReadonlySerialDiscovery",
             "MspV1ResponseAccumulator",
+            "ReadonlyBeeperSnapshotRead",
+            "SessionState::SnapshotRead",
+            "BeeperConfigSnapshot",
             "WriteCommandClass::NoWrite",
             "packet.approval().is_some()",
             "TRACE_EVENT_LIMIT",

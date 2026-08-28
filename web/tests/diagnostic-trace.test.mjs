@@ -64,6 +64,30 @@ test("the recorder rejects raw, arbitrary, and structurally unbounded fields", (
   assert.deepEqual(trace.snapshot(), []);
 });
 
+test("the fixed vocabulary accepts the reviewed snapshot stage without raw values", () => {
+  const trace = new DiagnosticTraceRecorder();
+  trace.record({
+    layer: "RUST",
+    phase: "BEEPER_CONFIG",
+    event: "DIRECTIVE",
+    stage: "BEEPER_CONFIG",
+    command: "MSP_BEEPER_CONFIG",
+    byteCount: 6,
+    direction: "REQUEST",
+  });
+  trace.record({
+    layer: "RUST",
+    phase: "SNAPSHOT_STAGE",
+    event: "SNAPSHOT_STAGE_OK",
+    stage: "BEEPER_CONFIG",
+    command: "MSP_BEEPER_CONFIG",
+  });
+  const formatted = formatSafeDiagnosticTrace([...trace.snapshot()]);
+  assert.match(formatted, /stage=BEEPER_CONFIG command=MSP_BEEPER_CONFIG/);
+  assert.match(formatted, /event=SNAPSHOT_STAGE_OK/);
+  assert.doesNotMatch(formatted, /beeperOffFlags|dshotBeacon|systemInitDisabled|raw/i);
+});
+
 test("copy text uses the ADE header and only fixed tokens with bounded numeric metadata", () => {
   const trace = new DiagnosticTraceRecorder();
   trace.record({
