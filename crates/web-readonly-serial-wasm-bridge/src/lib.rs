@@ -826,8 +826,7 @@ impl WasmReadonlySerialDiscovery {
         {
             return Err(BridgeError::InvalidState);
         }
-        let mut snapshot_read =
-            ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead)?;
+        let mut snapshot_read = ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead)?;
         let request = snapshot_read.next_request()?;
         let command = request.command();
         if command != CommandId::BeeperConfig {
@@ -843,11 +842,7 @@ impl WasmReadonlySerialDiscovery {
             Some(command),
             Phase::Exchanging,
         )?;
-        self.push_directive_trace(
-            ReadonlyStage::BeeperConfig,
-            command,
-            directive.bytes.len(),
-        )?;
+        self.push_directive_trace(ReadonlyStage::BeeperConfig, command, directive.bytes.len())?;
         Ok(directive)
     }
 
@@ -947,10 +942,8 @@ impl WasmReadonlySerialDiscovery {
                 self.start_close().map(Some)
             }
             Err(error) => {
-                let diagnostic = ReadonlyFailureDiagnostic::from_exec(
-                    ReadonlyStage::BeeperConfig,
-                    &error,
-                );
+                let diagnostic =
+                    ReadonlyFailureDiagnostic::from_exec(ReadonlyStage::BeeperConfig, &error);
                 self.push_snapshot_trace("SNAPSHOT_STAGE_FAILED", Some(diagnostic.reason));
                 self.snapshot_read = None;
                 self.pending_snapshot_identity = None;
@@ -1585,12 +1578,9 @@ mod tests {
         assert_eq!(directive.kind, "exchange-snapshot-read");
         assert_eq!(directive.bytes, bytes);
 
-        let with_payload = ade_protocol_msp::encode_frame(
-            Direction::Request,
-            CommandId::BeeperConfig,
-            &[0],
-        )
-        .unwrap();
+        let with_payload =
+            ade_protocol_msp::encode_frame(Direction::Request, CommandId::BeeperConfig, &[0])
+                .unwrap();
         let packet = OutboundPacket::read_only(with_payload).unwrap();
         assert!(
             directive_from(
@@ -1648,8 +1638,7 @@ mod tests {
                 1,
             );
             assert!(events.iter().all(|event| {
-                event.stage == ReadonlyStage::ApiVersion
-                    && event.command == CommandId::ApiVersion
+                event.stage == ReadonlyStage::ApiVersion && event.command == CommandId::ApiVersion
             }));
         }
     }

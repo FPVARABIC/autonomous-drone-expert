@@ -982,7 +982,10 @@ mod tests {
         assert_eq!(frame.direction, Direction::Request);
         assert_eq!(frame.known_command(), Some(CommandId::BeeperConfig));
         assert_eq!(frame.payload_len(), 0);
-        assert_eq!(reader.next_request(), Err(ExecError::SnapshotRequestPending));
+        assert_eq!(
+            reader.next_request(),
+            Err(ExecError::SnapshotRequestPending)
+        );
 
         let expected = BeeperConfigSnapshot {
             beeper_off_flags: 0x0102_0304,
@@ -995,10 +998,15 @@ mod tests {
             &expected.to_reply_payload(),
         )
         .unwrap();
-        let observed = reader.accept_response(&decode_frame(&reply).unwrap()).unwrap();
+        let observed = reader
+            .accept_response(&decode_frame(&reply).unwrap())
+            .unwrap();
         assert_eq!(observed, expected);
         assert!(reader.is_complete());
-        assert_eq!(reader.next_request(), Err(ExecError::SnapshotAlreadyComplete));
+        assert_eq!(
+            reader.next_request(),
+            Err(ExecError::SnapshotAlreadyComplete)
+        );
         assert_eq!(
             reader.accept_response(&decode_frame(&reply).unwrap()),
             Err(ExecError::SnapshotAlreadyComplete),
@@ -1025,15 +1033,13 @@ mod tests {
             &encode_frame(Direction::Reply, CommandId::BeeperConfig, &valid_payload).unwrap(),
         )
         .unwrap();
-        let mut unsolicited =
-            ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
+        let mut unsolicited = ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
         assert_eq!(
             unsolicited.accept_response(&valid_reply),
             Err(ExecError::NoSnapshotRequestPending),
         );
 
-        let mut error_reader =
-            ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
+        let mut error_reader = ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
         error_reader.next_request().unwrap();
         let error_reply =
             decode_frame(&encode_frame(Direction::Error, CommandId::BeeperConfig, &[]).unwrap())
@@ -1045,8 +1051,7 @@ mod tests {
             }),
         );
 
-        let mut short_reader =
-            ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
+        let mut short_reader = ReadonlyBeeperSnapshotRead::new(SessionState::SnapshotRead).unwrap();
         short_reader.next_request().unwrap();
         let short_reply = decode_frame(
             &encode_frame(Direction::Reply, CommandId::BeeperConfig, &[0; 8]).unwrap(),
