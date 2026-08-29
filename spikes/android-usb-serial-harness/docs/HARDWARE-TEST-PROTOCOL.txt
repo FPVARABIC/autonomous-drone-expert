@@ -1,0 +1,91 @@
+M1C - Android USB Serial Hardware Test Protocol (phone + board)
+==============================================================
+
+STATUS: REQUIRES HARDWARE TEST. Nothing here has been executed.
+This is a SPIKE tool. DO NOT USE FOR FLIGHT CONFIGURATION.
+
+Hardware (owner-approved): SpeedyBee F405 AIO 40A, USB serial source only.
+The app records USB descriptor metadata only; firmware identity stays
+UNKNOWN because MSP is prohibited.
+
+ABSOLUTE SAFETY RULES (every step)
+----------------------------------
+1. LiPo battery DISCONNECTED and moved away from the aircraft, the whole time.
+2. ALL propellers REMOVED.
+3. USB is the only connection and the only power source.
+4. The aircraft is secured on a stable surface.
+5. Betaflight Configurator and SpeedyBee app CLOSED; SpeedyBee phone/Bluetooth
+   link disabled.
+6. No flight test, no motor test.
+7. The app sends NO payload bytes. It enumerates, opens (baud/timeout), reads,
+   and closes.
+8. Opening a USB serial port is NOT assumed to be side-effect-free. Record any
+   reset, LED change, disconnect, or re-enumeration.
+
+STEP 0 - INSTALL (no cable connected)
+-------------------------------------
+- Download the private CI artifact m1c-android-usb-harness-<sha> and unzip.
+- Verify: the APK sha256 must equal the value in SHA256SUMS.txt and in
+  BUILD-INFO.txt, and BUILD-INFO's Source commit SHA must equal the reviewer-
+  announced SHA.
+- On the phone: enable "install unknown apps" for your file manager, tap
+  autonomous-drone-expert-m1c-debug.apk, install. (Debug review build.)
+
+STEP 1 - IDENTIFICATION + SAFETY GATE (no cable)
+------------------------------------------------
+- Open the app. Read the identification screen (spike label, source commit,
+  REQUIRES HARDWARE TEST).
+- On the Safety Gate, tick all eight items only when each is physically true.
+  The "continue" button stays disabled until all are ticked.
+
+STEP 2 - CONNECT + ENUMERATE
+----------------------------
+- Connect the board to the phone with a USB-OTG cable / adapter.
+- Devices screen -> "تحديث الأجهزة" (Refresh). Record: device name, VID, PID,
+  manufacturer, product, serial (if shown), android id, permission state,
+  driver match.
+
+STEP 3 - USB PERMISSION
+-----------------------
+- Tap "طلب إذن USB" (Request USB permission). Accept the Android dialog.
+- Confirm the device now shows permission = granted. Note: granting permission
+  does NOT open the device.
+
+STEP 4 - SINGLE OPEN OBSERVATION (3-second dwell)
+-------------------------------------------------
+- Select the device, go to Tests, tap "فتح واحد وملاحظة" (Single open).
+- The port is now HELD OPEN for ~3 seconds (not an instant open/close). The app
+  shows "المنفذ مفتوح الآن — راقب مؤشرات LED وأي إعادة تعداد على اللوحة".
+- WATCH the board for the whole dwell: LED restart? re-enumeration? DFU? sound?
+  If anything unexpected happens, STOP and record
+  "UNEXPECTED OPEN SIDE EFFECT - INVESTIGATION REQUIRED"; do not run the cycles.
+- The observation records open latency, dwell duration, and close outcome. It stays
+  HARDWARE_OBSERVED only -- never a PASS.
+
+STEP 5 - OPEN/CLOSE x20
+-----------------------
+- Only if step 4 was clean: tap "فتح/إغلاق 20 دورة". Record clean cycle count.
+
+STEP 6 - READ-TIMEOUT ACCURACY
+------------------------------
+- Tap "دقة مهلة القراءة". Record min/median/p95/max and data_events count.
+  (The board is silent without MSP, so timeouts are expected.)
+
+STEP 7 - UNPLUG DETECTION
+-------------------------
+- Tap "اكتشاف نزع الكابل", then physically unplug. Record the surfaced
+  classification (e.g. DEVICE_DISCONNECTED) and that it did not hang.
+
+STEP 8 - STOP / CANCELLATION
+----------------------------
+- Start "دقة مهلة القراءة" again and tap "إيقاف الاختبار الحالي" mid-run.
+  Record that the UI returns. Note: this is coroutine cancellation, NOT proof
+  that the driver read was cancelled.
+
+STEP 9 - EXPORT
+---------------
+- Results -> "حفظ التقرير" (writes JSON + text to app cache) and "مشاركة كنص"
+  (Android share sheet). Send both back to the reviewer.
+
+OUT OF SCOPE for this board/app: any write, MSP, CLI, reboot, DFU, flashing,
+motor test, or firmware identity. Those are not part of M1C.
