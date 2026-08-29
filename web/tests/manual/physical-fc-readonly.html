@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Physical FC read-only observation</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, sans-serif;
+        background: #f4f7f5;
+        color: #10231f;
+      }
+      body {
+        max-width: 52rem;
+        margin: 0 auto;
+        padding: 2rem 1rem 4rem;
+        line-height: 1.5;
+      }
+      h1, h2 { line-height: 1.2; }
+      .safety {
+        border: 3px solid #9b1c1c;
+        background: #fff5f5;
+        padding: 1rem 1.25rem;
+      }
+      .safety strong { display: block; margin-block: 0.35rem; }
+      button {
+        border: 0;
+        border-radius: 0.5rem;
+        padding: 0.8rem 1rem;
+        background: #0a5f54;
+        color: white;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:disabled { cursor: not-allowed; opacity: 0.55; }
+      dl {
+        display: grid;
+        grid-template-columns: minmax(10rem, 1fr) 2fr;
+        gap: 0.45rem 1rem;
+      }
+      dt { font-weight: 700; }
+      dd { margin: 0; overflow-wrap: anywhere; }
+      code { font-family: ui-monospace, monospace; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Physical FC read-only observation</h1>
+      <section class="safety" aria-labelledby="safety-title">
+        <h2 id="safety-title">READ-ONLY IDENTIFICATION TEST</h2>
+        <strong>NO CONFIGURATION CHANGES</strong>
+        <strong>NO SAVE</strong>
+        <strong>NO REBOOT</strong>
+        <strong>NO MOTOR COMMANDS</strong>
+        <p>Remove all propellers, disconnect the LiPo battery, and use FC USB only.</p>
+      </section>
+
+      <p>
+        This isolated engineering harness requests four read-only identity responses through the
+        accepted production host. A scope mismatch is a valid result and does not establish product
+        hardware support.
+      </p>
+      <p><code>PHYSICAL_TEST_SESSION = MANUAL_OWNER_OBSERVATION</code></p>
+
+      <button id="select-and-read" type="button" disabled>Select FC and Read Identity</button>
+      <p id="status" role="status" aria-live="polite">Preparing the audited Rust bridge…</p>
+      <dl id="result" aria-label="Privacy-bounded typed identity result"></dl>
+    </main>
+    <script type="module" src="/physical-fc-readonly.mjs"></script>
+  </body>
+</html>
